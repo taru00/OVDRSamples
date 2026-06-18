@@ -132,14 +132,35 @@ local function randomCFrameInsidePart(part)
 	return part.CFrame * CFrame.new(rx, ry, rz)
 end
 
-local function placePhysicalBallAt(player, data, cf)
-	local ballTemplate2 = ServerStorage:WaitForChild("Ball2")
-	local ball2         = ballTemplate2:Clone()
-	ball2.Name          = "PhysicalBall_" .. tostring(player.UserId)
-	ball2.CFrame        = cf
-	ball2.Anchored      = true   -- ✅ false → true
-	ball2.CanCollide    = true
-	ball2.Parent        = Workspace
+local function createPlayerBall(player)
+	local oldBall = playerBalls[player.UserId]
+	if oldBall and oldBall.Parent then
+		oldBall:Destroy()
+	end
+
+	local ballTemplate = ServerStorage:WaitForChild("Ball")
+	local ball = ballTemplate:Clone()
+	ball.Name = "GolfBall_" .. tostring(player.UserId)
+	ball.Parent = Workspace
+	ball:Stop()
+	ball:SetPlaybackTime(0)
+	setupBallCollision(ball, player)
+	playerBalls[player.UserId] = ball
+
+	return ball
+end
+
+local function getPlayerBall(player)
+	return playerBalls[player.UserId]
+end
+
+local function destroyPlayerBall(player)
+	local ball = playerBalls[player.UserId]
+	if ball and ball.Parent then
+		ball:Destroy()
+	end
+	playerBalls[player.UserId] = nil
+end
 
 local function placeSimulationBallAt(player, data, cf)
 	local ball = getPlayerBall(player)
@@ -364,16 +385,14 @@ end
 Players.PlayerAdded:Connect(function(player)
 	assignSlot(player)
 	playerScores[player.UserId] = {}
+	createPlayerBall(player)
 	broadcastSlots()
 end)
 
 Players.PlayerRemoving:Connect(function(player)
-	local data = playerData[player.UserId]
-	if data and data.activeBall and data.activeBall.Parent then
-		data.activeBall:Destroy()
-	end
 	playerData[player.UserId] = nil
 	playerScores[player.UserId] = nil
+	destroyPlayerBall(player)
 	releaseSlot(player)
 	broadcastSlots()
 	broadcastScoreboard()
@@ -406,100 +425,36 @@ SwingEvent.OnServerEvent:Connect(function(player, direction, power)
 	if dir.Magnitude < 0.001 then dir = Vector3.new(0, 0, -1) end
 	dir = dir.Unit
 
-	local startCF = CFrame.lookAt(startPos + Vector3.new(0, 3, 0), dir * 10, Vector3.yAxis)
-	local oldBall = data.activeBall
-
-	if oldBall then
-		oldBall.Anchored = true
-		oldBall.CanCollide = false
-	end
-
-	local ballTemplate = ServerStorage:WaitForChild("Ball")
-	local simBall = ballTemplate:Clone()
-
-	wait(0.1)
-	simBall.Parent = game.Workspace
-	simBall:Stop()
-	simBall.Name = "SimBall_" .. tostring(player.UserId)
-	simBall.CFrame = startCF
-	simBall.Transparency = 0
-
-	wait(0.2)
-
-	setupBallCollision(simBall, player)
-	simBall.EnablePathMarker = true
-
-	data.activeBall = simBall
+	local shotOrigin = startPos + Vector3.new(0, 3, 0)
+	local startCF = CFrame.lookAt(shotOrigin, shotOrigin + dir * 10, Vector3.yAxis)
+	ball:Stop()
+	ball:SetPlaybackTime(0)
+	ball.CFrame = startCF
+	ball.EnablePathMarker = true
 	data.isSimulating = true
 
 	local ratio = math.clamp(power / 100, 0, 1)
-	local swingSpeed = GolfConfig.SWING_POWER_MULTIPLIER * ratio
-	simBall.CFrame = CFrame.lookAt(startCF.Position, startCF.Position + dir * 10, Vector3.yAxis)
+	local params = ball:GetEditorBallSimParams()
+	params.Mass = 0.9
+	params.BaseGravity = 3200
+	params.DefaultRestitution = 0.2
+	params.DefaultFriction = 1
+	params.DampingLinear = 0.012
+	params.Simsteps = GolfConfig.SIMULATION_STEPS
+	params.StepsPerSecond = GolfConfig.SIMULATION_STEPS_PER_SECOND
+	params.InitialSpeed = GolfConfig.SWING_POWER_MULTIPLIER * ratio
 
-	local Params = BallSimParams.new()
-	Params.Mass = 0.9
-	Params.BaseGravity = 3200
-	Params.Restitution = 0.2
-	Params.Friction = 1
-	Params.DampingLinear = 0.012
-	--Params.Simsteps = GolfConfig.SIMULATION_STEPS
-	--Params.DeltaTime = GolfConfig.SIMULATION_DELTA_TIME
-	--Params.InitialCFrame = simBall.CFrame
-	Params.InitialSpeed = 100
+	ball:Simulate(params)
+	TrackBallEvent:FireClient(player, ball.Name)
+	ball:Play(true)
+	ball.Paused:Wait()
 
-	if oldBall then
-		oldBall:Destroy()
-	end
+	if playerData[player.UserId] ~= data or data.cleared then return end
+	if not ball.Parent then return end
 
-	simBall:Simulate(Params)
-	task.wait(0.3)
-
-	local function finishSwingAndSwapToPhysical(finalCFrame, isReset)
-		if playerData[player.UserId] == data and not data.cleared then
-			local safePos = finalCFrame.Position + Vector3.new(0, 0.15, 0)
-			local flatCF = CFrame.new(safePos) * finalCFrame.Rotation
-			data.lastCFrame = flatCF
-
-			if data.activeBall then
-				data.activeBall:Destroy()
-			end
-
-			local newPhysBall = placePhysicalBallAt(player, data, flatCF)
-			data.swinging = false
-			BallReadyEvent:FireClient(player, newPhysBall.Name, isReset)
-
-			task.delay(GolfConfig.PHYSICAL_BALL_UNANCHOR_DELAY, function()
-				if newPhysBall and newPhysBall.Parent then
-					newPhysBall.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
-					newPhysBall.Anchored = false
-				end
-			end)
-		end
-	end
-
-	TrackBallEvent:FireClient(player, simBall.Name)
-
-
-	if simBall and simBall.Parent then
-		simBall:Play()
-	end
-	simBall.Paused:Wait()
-
-	
-	if not simBall or not simBall.Parent then
-		if playerData[player.UserId] == data and not data.cleared then
-			data.swinging = false
-			if data.activeBall and data.activeBall.Parent then
-				BallReadyEvent:FireClient(player, data.activeBall.Name, false)
-			end
-		end
-		return
-	end
-
-	local finalCF = simBall.BallCFrame
-	if not finalCF then
-		finalCF = data.lastCFrame
-	end
+	local finalCF = ball.BallCFrame
+	data.lastCFrame = finalCF
+	data.isSimulating = false
 
 	local goalPart = data.goalPart
 	local goalRadius = math.min(goalPart.Size.X, goalPart.Size.Z) / 2 * 0.25
@@ -508,11 +463,9 @@ SwingEvent.OnServerEvent:Connect(function(player, direction, power)
 	local isGoal = dist2D <= goalRadius
 
 	if isGoal then
-		if playerData[player.UserId] == data and not data.cleared then
-			triggerGoal(player, data, finalCF.Position)
-		end
+		triggerGoal(player, data, finalCF.Position)
 	else
-		finishSwingAndSwapToPhysical(finalCF, false)
+		data.swinging = false
+		BallReadyEvent:FireClient(player, ball.Name, false)
 	end
-
 end)
