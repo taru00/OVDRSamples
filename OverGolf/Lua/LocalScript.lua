@@ -294,12 +294,18 @@ end
 -- 스윙
 -- ─────────────────────────────────────────
 local function doSwing()
-	if not canSwing or not playerBall or not playerBall.Parent then
-		if playerBall and not playerBall.Parent then
+	if not canSwing or not playerBall then return end
+
+	local hasBallParent, ballParent = pcall(function()
+		return playerBall.Parent
+	end)
+	if not hasBallParent or not ballParent then
+		if playerBall then
 			playerBall = nil
 		end
 		return
 	end
+
 	canSwing = false
 	setPowerBarVisible(false)
 
@@ -432,7 +438,16 @@ BallReadyEvent.OnClientEvent:Connect(function(ballName, snapCamera)
 	end
 
 	if snapCamera then
-		cameraTarget.Position = playerBall.BallCFrame.Position
+		local hasBallCFrame, ballCFrame = pcall(function()
+			return playerBall.BallCFrame
+		end)
+		if hasBallCFrame and ballCFrame then
+			cameraTarget.Position = ballCFrame.Position
+		else
+			playerBall = nil
+			canSwing = false
+			return
+		end
 	end
 
 	camera.CameraType            = Enum.CameraType.Custom
@@ -537,28 +552,31 @@ local activeDirectionIndicator = nil -- 지시기 캐시용 변수
 local directionRelativeCFrame = nil  -- 상대 위치/회전 캐시
 
 RunService.RenderStepped:Connect(function(dt)
-	if playerBall and not playerBall.Parent then
-		playerBall = nil
-		canSwing = false
+	local ballPos = nil
+	if playerBall then
+		local hasBallCFrame, ballCFrame = pcall(function()
+			return playerBall.BallCFrame
+		end)
+
+		if hasBallCFrame and ballCFrame then
+			ballPos = ballCFrame.Position
+		else
+			playerBall = nil
+			canSwing = false
+		end
 	end
 
 	-- [기존 카메라 추적 로직]
 	if isGoalAnim and goalCamTargetCFrame then
 		camera.CFrame = camera.CFrame:Lerp(goalCamTargetCFrame, math.clamp(dt * 3, 0, 1))
-	elseif playerBall then
-		local ballPos = playerBall.BallCFrame.Position
+	elseif ballPos then
 		cameraTarget.Position = cameraTarget.Position:Lerp(ballPos, math.clamp(dt * 15, 0, 1))
 	end
-
-	if playerBall then
-		updateGoldPoles(playerBall.BallCFrame.Position)
-	else
-		updateGoldPoles(nil)
-	end
-
+	
+	updateGoldPoles(ballPos)
+	
 	-- [새로 추가된 방향 지시기(Direction) 궤도 회전 로직]
-	if canSwing and playerBall then
-		local ballPos = playerBall.BallCFrame.Position
+	if canSwing and ballPos then
 		if ballPos then
 			-- 1. 파트 복제 및 초기 오프셋(Relative CFrame) 수학적 설정
 			if not activeDirectionIndicator then
@@ -616,15 +634,15 @@ RunService.RenderStepped:Connect(function(dt)
 				
 				local currentColor = Color3.fromRGB(math.round(r), math.round(g), math.round(b))
 				
-					if activeDirectionIndicator:IsA("BasePart") then
-						activeDirectionIndicator.Color = currentColor
-					else
-						for _, desc in ipairs(activeDirectionIndicator:GetDescendants()) do
-							if desc:IsA("BasePart") then
-								desc.Color = currentColor
-							end
+				if activeDirectionIndicator:IsA("BasePart") then
+					activeDirectionIndicator.Color = currentColor
+				else
+					for _, desc in ipairs(activeDirectionIndicator:GetDescendants()) do
+						if desc:IsA("BasePart") then
+							desc.Color = currentColor
 						end
 					end
+				end
 			end
 		end
 	end
