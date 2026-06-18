@@ -123,7 +123,6 @@ local soundWall     = soundsFolder:WaitForChild("Wall")
 local targetBall          = nil
 local canSwing            = false
 local currentPower        = 50
-local ballAccessMethod    = nil
 local isGoalAnim          = false
 local goalCamTargetCFrame = nil
 
@@ -221,56 +220,6 @@ hitbox.InputEnded:Connect(function(input)
 		isDraggingBar = false
 	end
 end)
-
--- ─────────────────────────────────────────
--- 공 위치 추적
--- ─────────────────────────────────────────
-local lastKnownPos = nil
-
-local function isDestroyed(instance)
-	local ok,parent = pcall(function()
-		return instance.Parent
-	end)
-	
-	return not ok
-end
-local function getBallPosition()
-	if not targetBall then return lastKnownPos end
-	
-	
-	if isDestroyed(targetBall) then
-		targetBall = nil
-		return lastKnownPos
-	end
-	print(ballAccessMethod)
-	local pos = nil
-	if ballAccessMethod == "CFrame" then
-		if targetBall:IsA("SimulationBall") then
-			pos = targetBall.BallCFrame.Position
-		else
-			pos = targetBall.CFrame.Position
-		end
-	elseif ballAccessMethod == "Position" then
-		if targetBall:IsA("SimulationBall") then
-			pos = targetBall.BallCFrame.Position
-		else
-			pos = targetBall.CFrame.Position
-		end
-	elseif ballAccessMethod == "Model" then
-		pos = targetBall.PrimaryPart.Position
-	elseif targetBall:IsA("Model") and targetBall.PrimaryPart then
-		ballAccessMethod = "Model"
-		pos = targetBall.PrimaryPart.Position
-	elseif targetBall:IsA("BasePart") then
-		ballAccessMethod = "CFrame"
-		pos = targetBall.CFrame.Position
-	else
-		pos = targetBall.BallCFrame.Position
-	end
-
-	if pos then lastKnownPos = pos end
-	return lastKnownPos
-end
 
 -- ─────────────────────────────────────────
 -- 스코어보드 표시
@@ -460,7 +409,6 @@ BallReadyEvent.OnClientEvent:Connect(function(ballName, snapCamera)
 	end
 
 	targetBall          = ball
-	ballAccessMethod    = nil
 	canSwing            = true   -- ✅ 공 확인 후 세팅 (순서는 그대로)
 	isGoalAnim          = false
 	goalCamTargetCFrame = nil
@@ -472,10 +420,7 @@ BallReadyEvent.OnClientEvent:Connect(function(ballName, snapCamera)
 	end
 
 	if snapCamera then
-		local initPos = getBallPosition()
-		if initPos then
-			cameraTarget.Position = initPos
-		end
+		cameraTarget.Position = targetBall.BallCFrame.Position
 	end
 
 	camera.CameraType            = Enum.CameraType.Custom
@@ -488,7 +433,6 @@ TrackBallEvent.OnClientEvent:Connect(function(ballName)
 	local ball = workspace:WaitForChild(ballName, 5)
 	if ball then
 		targetBall       = ball
-		ballAccessMethod = nil
 		canSwing         = false
 	end
 end)
@@ -574,25 +518,24 @@ end
 -- ─────────────────────────────────────────
 -- RenderStepped
 -- ─────────────────────────────────────────
-local activeDirectionIndicator = nil -- 지시기 캐시용 변수
-local directionRelativeCFrame = nil  -- 상대 위치/회전 캐시
-
 RunService.RenderStepped:Connect(function(dt)
 	-- [기존 카메라 추적 로직]
 	if isGoalAnim and goalCamTargetCFrame then
 		camera.CFrame = camera.CFrame:Lerp(goalCamTargetCFrame, math.clamp(dt * 3, 0, 1))
 	elseif targetBall then
-		local ballPos = getBallPosition()
-		if ballPos then
-			cameraTarget.Position = cameraTarget.Position:Lerp(ballPos, math.clamp(dt * 15, 0, 1))
-		end
+		local ballPos = targetBall.BallCFrame.Position
+		cameraTarget.Position = cameraTarget.Position:Lerp(ballPos, math.clamp(dt * 15, 0, 1))
 	end
 
-	updateGoldPoles(getBallPosition())
+	if targetBall then
+		updateGoldPoles(targetBall.BallCFrame.Position)
+	else
+		updateGoldPoles(nil)
+	end
 
 	-- [새로 추가된 방향 지시기(Direction) 궤도 회전 로직]
 	if canSwing and targetBall then
-		local ballPos = getBallPosition()
+		local ballPos = targetBall.BallCFrame.Position
 		if ballPos then
 			-- 1. 파트 복제 및 초기 오프셋(Relative CFrame) 수학적 설정
 			if not activeDirectionIndicator then
@@ -601,7 +544,7 @@ RunService.RenderStepped:Connect(function(dt)
 					activeDirectionIndicator = template:Clone()
 					activeDirectionIndicator.Anchored = true
 					activeDirectionIndicator.CanCollide = false
-					activeDirectionIndicator.Parent = targetBall
+					activeDirectionIndicator.Parent = workspace
 
 					-- 유저님이 직접 제공해주신 절대 좌표
 					local refBallPos = Vector3.new(5330.0, 425.697052, 1960.0)
@@ -661,16 +604,7 @@ RunService.RenderStepped:Connect(function(dt)
 			end
 		end
 	else
-		-- 스윙 중이거나 다음 홀로 넘어갈 때(canSwing == false) 지시기 파기
-		if activeDirectionIndicator then
-			-- 1. 객체가 게임 안에 존재하는지 최종 확인
-			if activeDirectionIndicator:IsDescendantOf(game) then
-				--activeDirectionIndicator:Destroy()
-			end
-			
-			-- 2. 변수 즉시 초기화 (중요)
-			activeDirectionIndicator = nil
-			directionRelativeCFrame = nil
-		end
+		-- 스윙 중이거나 다음 홀로 넘어갈 때(canSwing == false) 지시기를 제거합니다.
+		clearDirectionIndicator()
 	end
 end)

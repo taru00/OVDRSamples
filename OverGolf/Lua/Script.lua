@@ -116,6 +116,7 @@ end
 -- Player data
 -- ─────────────────────────────────────────
 local playerData = {}
+local playerBalls = {} -- UserId -> SimulationBall owned by that player
 
 -- ─────────────────────────────────────────
 -- Helpers
@@ -140,23 +141,31 @@ local function placePhysicalBallAt(player, data, cf)
 	ball2.CanCollide    = true
 	ball2.Parent        = Workspace
 
-	setupBallCollision(ball2, player)
+local function placeSimulationBallAt(player, data, cf)
+	local ball = getPlayerBall(player)
+	if not ball or not ball.Parent then
+		return nil
+	end
 
-	data.activeBall   = ball2
+	ball:Stop()
+	ball:SetPlaybackTime(0)
+	ball.CFrame = cf
+
+	data.activeBall = ball
 	data.isSimulating = false
 
-	return ball2
+	return ball
 end
 
 local setupBallForPlayer
 
 local function playGoalSuctionAnim(ball, startPos, goalPos)
-	local STEPS    = 30
+	local STEPS = 30
 	local INTERVAL = 1 / 30
 
 	for i = 1, STEPS do
 		if not ball or not ball.Parent then break end
-		local t   = i / STEPS
+		local t = i / STEPS
 		local xzT = math.log(1 + t * 9) / math.log(10)
 		local newX = startPos.X + (goalPos.X - startPos.X) * xzT
 		local newZ = startPos.Z + (goalPos.Z - startPos.Z) * xzT
@@ -207,11 +216,11 @@ local function triggerGoal(player, data, stoppedPos)
 	if ball and ball.Parent then
 		local yDiff = stoppedPos.Y - goalPos.Y
 		if yDiff > SUCTION_Y_THRESHOLD then
-			ball.Anchored = true
 			playGoalSuctionAnim(ball, stoppedPos, goalPos)
 		end
 		task.wait(0.2)
-		ball:Destroy()
+		ball:Stop()
+		ball:SetPlaybackTime(0)
 	end
 
 	playerData[player.UserId] = nil
@@ -240,7 +249,8 @@ setupBallForPlayer = function(player, character, targetHole)
 
 	local prev = playerData[player.UserId]
 	if prev and prev.activeBall and prev.activeBall.Parent then
-		prev.activeBall:Destroy()
+		prev.activeBall:Stop()
+		prev.activeBall:SetPlaybackTime(0)
 	end
 	playerData[player.UserId] = nil
 
@@ -278,65 +288,74 @@ setupBallForPlayer = function(player, character, targetHole)
 	}
 	playerData[player.UserId] = data
 
-	local physicalBall = placePhysicalBallAt(player, data, spawnCF)
+	local ball = placeSimulationBallAt(player, data, spawnCF)
+	if not ball then
+		playerData[player.UserId] = nil
+		return
+	end
 
-task.wait(GolfConfig.BALL_READY_DELAY)
-	BallReadyEvent:FireClient(player, physicalBall.Name, true)
+	task.wait(GolfConfig.BALL_READY_DELAY)
+	if playerData[player.UserId] == data and ball and ball.Parent then
+		BallReadyEvent:FireClient(player, ball.Name, true)
+	end
 
 	task.spawn(function()
 		while data and data.activeBall and data.activeBall.Parent and playerData[player.UserId] == data do
 			task.wait(0.2)
 			if data.cleared then break end
 	
-			local ball       = data.activeBall
-			local currentPos = ball.Position
-	
-			-- ✅ 다른 홀 필드 체크
-			local rayResult = workspace:Raycast(
-				currentPos + Vector3.new(0, 5, 0),
-				Vector3.new(0, -20, 0)
-			)
-			if rayResult and rayResult.Instance then
-				local parentName = rayResult.Instance.Parent and rayResult.Instance.Parent.Name or ""
-				local hitHoleNum = parentName:match("^Hole(%d+)$")
-				if hitHoleNum and tonumber(hitHoleNum) ~= data.currentHole then
-					if not data.swinging then
-						local newSpawnCF = data.lastCFrame
-						if data.activeBall then data.activeBall:Destroy() end
-						local newBall = placePhysicalBallAt(player, data, newSpawnCF)
-						data.swinging = false
-						BallReadyEvent:FireClient(player, newBall.Name, true)
+				local ball = data.activeBall
+				local currentPos = ball.BallCFrame.Position
+				if playerData[player.UserId] ~= data then break end
+		
+				-- ✅ 다른 홀 필드 체크
+				local rayResult = workspace:Raycast(
+					currentPos + Vector3.new(0, 5, 0),
+					Vector3.new(0, -20, 0)
+				)
+				local skipGoalCheck = false
+				if rayResult and rayResult.Instance then
+					local parent = rayResult.Instance.Parent
+					local parentName = parent and parent.Name or ""
+					local hitHoleNum = parentName:match("^Hole(%d+)$")
+					if hitHoleNum and tonumber(hitHoleNum) ~= data.currentHole then
+						if not data.swinging then
+							data.activeBall:Stop()
+							data.activeBall.CFrame = data.lastCFrame
+							data.activeBall:SetPlaybackTime(0)
+							BallReadyEvent:FireClient(player, data.activeBall.Name, true)
+						end
+						skipGoalCheck = true
 					end
-					continue
 				end
-			end
 	
 			-- 기존 골 판정
-			local gPart   = data.goalPart
-			local gRadius = math.min(gPart.Size.X, gPart.Size.Z) / 2 * 0.6
-			local rel     = gPart.CFrame:PointToObjectSpace(currentPos)
-			local dist2D  = math.sqrt(rel.X^2 + rel.Z^2)
-	
-			if dist2D <= gRadius and currentPos.Y < gPart.Position.Y + 2 and currentPos.Y > gPart.Position.Y - 50 then
-				triggerGoal(player, data, currentPos)
-			elseif data.currentHole == 18 then
-			-- ✅ hole 18은 Goal 파트에 닿기만 하면 골
-				local rel18  = gPart.CFrame:PointToObjectSpace(currentPos)
-				local halfX  = gPart.Size.X / 2
-			local halfZ  = gPart.Size.Z / 2
-			if math.abs(rel18.X) <= halfX and math.abs(rel18.Z) <= halfZ
-				and currentPos.Y < gPart.Position.Y + 10
-				and currentPos.Y > gPart.Position.Y - 50 then
-				triggerGoal(player, data, currentPos)
-			end
-			elseif currentPos.Y < -150 then
-				if not data.swinging then
-					local newSpawnCF = data.lastCFrame
-					if data.activeBall then data.activeBall:Destroy() end
-					local newBall = placePhysicalBallAt(player, data, newSpawnCF)
-					data.swinging = false
-					BallReadyEvent:FireClient(player, newBall.Name, true)
-				end
+			if not skipGoalCheck then
+				local gPart   = data.goalPart
+				local gRadius = math.min(gPart.Size.X, gPart.Size.Z) / 2 * 0.6
+				local rel     = gPart.CFrame:PointToObjectSpace(currentPos)
+				local dist2D  = math.sqrt(rel.X^2 + rel.Z^2)
+		
+				if dist2D <= gRadius and currentPos.Y < gPart.Position.Y + 2 and currentPos.Y > gPart.Position.Y - 50 then
+					triggerGoal(player, data, currentPos)
+				elseif data.currentHole == 18 then
+					-- ✅ hole 18은 Goal 파트에 닿기만 하면 골
+					local rel18  = gPart.CFrame:PointToObjectSpace(currentPos)
+					local halfX  = gPart.Size.X / 2
+					local halfZ  = gPart.Size.Z / 2
+					if math.abs(rel18.X) <= halfX and math.abs(rel18.Z) <= halfZ
+						and currentPos.Y < gPart.Position.Y + 10
+						and currentPos.Y > gPart.Position.Y - 50 then
+						triggerGoal(player, data, currentPos)
+					end
+					elseif currentPos.Y < -150 then
+						if not data.swinging then
+							data.activeBall:Stop()
+							data.activeBall.CFrame = data.lastCFrame
+							data.activeBall:SetPlaybackTime(0)
+							BallReadyEvent:FireClient(player, data.activeBall.Name, true)
+						end
+					end
 			end
 		end
 	end)
@@ -376,11 +395,13 @@ SwingEvent.OnServerEvent:Connect(function(player, direction, power)
 	if not data or data.swinging or data.cleared then return end
 	if not data.activeBall or not data.activeBall.Parent then return end
 
-	-- 타수 증가
 	data.swingCount = (data.swingCount or 0) + 1
 	data.swinging = true
 
-	local startPos = data.activeBall.Position
+	local ball = data.activeBall
+	-- 첫 샷 직후에는 BallCFrame 갱신이 늦을 수 있어 서버가 저장한 안정 위치를 우선 사용합니다.
+	local startCFrame = data.lastCFrame or ball.CFrame or ball.BallCFrame
+	local startPos = startCFrame.Position
 	local dir = Vector3.new(direction.X, 0, direction.Z)
 	if dir.Magnitude < 0.001 then dir = Vector3.new(0, 0, -1) end
 	dir = dir.Unit
