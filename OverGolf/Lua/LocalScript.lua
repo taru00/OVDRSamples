@@ -318,7 +318,9 @@ local function doSwing()
 	local look = camera.CFrame.LookVector
 	local dir  = Vector3.new(look.X, 0, look.Z)
 	if dir.Magnitude < 0.001 then dir = Vector3.new(0, 0, -1) end
-	SwingEvent:FireServer(dir.Unit, currentPower)
+	local shotDir = dir.Unit
+	printClientNetwork("Send", "SwingEvent", string.format("power=%.2f dir=(%.3f, %.3f, %.3f)", currentPower, shotDir.X, shotDir.Y, shotDir.Z))
+	SwingEvent:FireServer(shotDir, currentPower)
 end
 
 swingButton.Activated:Connect(doSwing)
@@ -327,6 +329,7 @@ swingButton.Activated:Connect(doSwing)
 -- 이벤트 수신
 -- ─────────────────────────────────────────
 GoalAnimEvent.OnClientEvent:Connect(function(goalPart)
+	printClientNetwork("Receive", "GoalAnim", "goal=" .. tostring(goalPart and goalPart.Name))
 	isGoalAnim = true
 	camera.CameraType = Enum.CameraType.Scriptable
 	soundGoal:Play()
@@ -352,6 +355,7 @@ GoalAnimEvent.OnClientEvent:Connect(function(goalPart)
 end)
 
 GoalResultEvent.OnClientEvent:Connect(function(resultData)
+	printClientNetwork("Receive", "GoalResult", "hole=" .. tostring(resultData.hole) .. " swings=" .. tostring(resultData.swings))
 	blockBar = true
 
 	-- 원본 사이즈 최초 1회 캐시
@@ -411,6 +415,7 @@ GoalResultEvent.OnClientEvent:Connect(function(resultData)
 end)
 
 BallReadyEvent.OnClientEvent:Connect(function(ballName, snapCamera)
+	printClientNetwork("Receive", "BallReady", "snapCamera=" .. tostring(snapCamera))
 	-- 서버에서 Clone한 SimulationBall이 클라이언트에 복제될 때까지 게임 시작 처리를 지연합니다.
 	local ball = workspace:WaitForChild(ballName)
 
@@ -437,27 +442,32 @@ BallReadyEvent.OnClientEvent:Connect(function(ballName, snapCamera)
 end)
 
 TrackBallEvent.OnClientEvent:Connect(function(ballName)
+	printClientNetwork("Receive", "TrackBallEvent")
 	local ball = workspace:WaitForChild(ballName)
 	playerBall          = ball
 	canSwing         = false
 end)
 
 ClearEvent.OnClientEvent:Connect(function(holeNumber)
+	printClientNetwork("Receive", "ClearEvent", "hole=" .. tostring(holeNumber))
 	canSwing     = false
 	playerBall   = nil
 	-- Hole cleared; result and scoreboard UI handle player feedback.
 end)
 
 WallHitEvent.OnClientEvent:Connect(function()
+	printClientNetwork("Receive", "WallHitEvent")
 	soundWall:Play()
 end)
 
 SlotAssignEvent.OnClientEvent:Connect(function(slotData, mySlotNum)
+	printClientNetwork("Receive", "SlotAssign", "mySlot=" .. tostring(mySlotNum))
 	-- Slot data is currently used by the server-side scoreboard order.
 	-- Keep this listener so future UI can react to slot assignment without changing networking.
 end)
 
 ScoreboardUpdateEvent.OnClientEvent:Connect(function(data)
+	printClientNetwork("Receive", "ScoreboardUpdate")
 	lastScoreboardData = data
 
 	-- RANK 위젯이 이미 보이고 있으면 즉시 순위 업데이트

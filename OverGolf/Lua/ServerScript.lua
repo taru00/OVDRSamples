@@ -30,6 +30,12 @@ local GoalResultEvent       = Remotes.GoalResult
 local ScoreboardUpdateEvent = Remotes.ScoreboardUpdate
 local StartGameEvent        = Remotes.StartGame
 
+local function printServerNetwork(direction, eventName, player, detail)
+	local playerName = player and player.Name or "AllPlayers"
+	local detailText = detail and (" | " .. detail) or ""
+	print("[Server][Network] " .. direction .. " " .. eventName .. " player=" .. playerName .. detailText)
+end
+
 -- ─────────────────────────────────────────
 -- 슬롯 관리 (최대 6명)
 -- ─────────────────────────────────────────
@@ -63,6 +69,7 @@ local function broadcastSlots()
 		slotData[slot] = p and p.Name or "?"
 	end
 	for _, p in ipairs(Players:GetPlayers()) do
+		printServerNetwork("Send", "SlotAssign", p, "slot=" .. tostring(userSlots[p.UserId] or 0))
 		SlotAssignEvent:FireClient(p, slotData, userSlots[p.UserId] or 0)
 	end
 end
@@ -90,6 +97,7 @@ local function broadcastScoreboard()
 		end
 	end
 	for _, p in ipairs(Players:GetPlayers()) do
+		printServerNetwork("Send", "ScoreboardUpdate", p)
 		ScoreboardUpdateEvent:FireClient(p, data)
 	end
 end
@@ -106,6 +114,7 @@ local function setupBallCollision(ball, player)
 			local currentTime = os.clock()
 			if currentTime - lastHitTime > HIT_COOLDOWN then
 				lastHitTime = currentTime
+				printServerNetwork("Send", "WallHitEvent", player)
 				WallHitEvent:FireClient(player)
 			end
 		end
@@ -286,6 +295,7 @@ local function triggerGoal(player, data, stoppedPos)
 	local term, exp, point = GolfScoring.GetScoreInfo(swings, clearedHole)
 
 	-- ─── 결과 전송 (GoalAnim과 동시에) ───
+	printServerNetwork("Send", "GoalResult", player, "hole=" .. tostring(clearedHole) .. " swings=" .. tostring(swings))
 	GoalResultEvent:FireClient(player, {
 		hole    = clearedHole,
 		swings  = swings,
@@ -294,6 +304,7 @@ local function triggerGoal(player, data, stoppedPos)
 		exp     = exp,
 		point   = point,
 	})
+	printServerNetwork("Send", "GoalAnim", player, "goal=" .. tostring(data.goalPart and data.goalPart.Name))
 	GoalAnimEvent:FireClient(player, data.goalPart)
 
 	task.wait(1.5)
@@ -309,6 +320,7 @@ local function triggerGoal(player, data, stoppedPos)
 	end
 
 	playerData[player.UserId] = nil
+	printServerNetwork("Send", "ClearEvent", player, "hole=" .. tostring(clearedHole))
 	ClearEvent:FireClient(player, clearedHole)
 
 	-- 스코어보드 전체 브로드캐스트
@@ -381,6 +393,7 @@ setupBallForPlayer = function(player, character, targetHole)
 
 	task.wait(GolfConfig.BALL_READY_DELAY)
 	if playerData[player.UserId] == data and ball and ball.Parent then
+		printServerNetwork("Send", "BallReady", player, "snapCamera=true")
 		BallReadyEvent:FireClient(player, ball.Name, true)
 	end
 
@@ -410,6 +423,7 @@ setupBallForPlayer = function(player, character, targetHole)
 							stopSimulationBall(player, ball, "reset from other hole field")
 							setSimulationBallCFrame(player, ball, data.lastCFrame, "reset from other hole field")
 							setSimulationBallPlaybackTime(player, ball, 0, "reset from other hole field")
+							printServerNetwork("Send", "BallReady", player, "snapCamera=true")
 							BallReadyEvent:FireClient(player, ball.Name, true)
 						end
 						skipGoalCheck = true
@@ -440,6 +454,7 @@ setupBallForPlayer = function(player, character, targetHole)
 							stopSimulationBall(player, ball, "reset from fall")
 							setSimulationBallCFrame(player, ball, data.lastCFrame, "reset from fall")
 							setSimulationBallPlaybackTime(player, ball, 0, "reset from fall")
+							printServerNetwork("Send", "BallReady", player, "snapCamera=true")
 							BallReadyEvent:FireClient(player, ball.Name, true)
 						end
 					end
@@ -465,6 +480,7 @@ Players.PlayerRemoving:Connect(function(player)
 end)
 
 StartGameEvent.OnServerEvent:Connect(function(player)
+	printServerNetwork("Receive", "StartGame", player)
 	local character = player.Character
 	if character then
 		-- 이때 플레이어의 캐릭터를 투명하게 만들고 1번 홀 공을 세팅합니다.
@@ -493,10 +509,17 @@ SwingEvent.OnServerEvent:Connect(function(player, direction, power)
 
 	local shotOrigin = startPos + Vector3.new(0, 3, 0)
 	local startCF = CFrame.lookAt(shotOrigin, shotOrigin + dir * 10, Vector3.yAxis)
-	stopSimulationBall(player, ball, "prepare swing")
-	setSimulationBallPlaybackTime(player, ball, 0, "prepare swing")
-	setSimulationBallCFrame(player, ball, startCF, "prepare swing")
-	setSimulationBallPathMarker(player, ball, true, "prepare swing")
+	local swingDetail = string.format(
+		"power=%.2f dir=(%.3f, %.3f, %.3f) pos=(%.3f, %.3f, %.3f)",
+		power,
+		dir.X, dir.Y, dir.Z,
+		shotOrigin.X, shotOrigin.Y, shotOrigin.Z
+	)
+	printServerNetwork("Receive", "SwingEvent", player, swingDetail)
+	stopSimulationBall(player, ball, "prepare swing | " .. swingDetail)
+	setSimulationBallPlaybackTime(player, ball, 0, "prepare swing | " .. swingDetail)
+	setSimulationBallCFrame(player, ball, startCF, "prepare swing | " .. swingDetail)
+	setSimulationBallPathMarker(player, ball, true, "prepare swing | " .. swingDetail)
 	data.isSimulating = true
 
 	local ratio = math.clamp(power / 100, 0, 1)
@@ -506,6 +529,7 @@ SwingEvent.OnServerEvent:Connect(function(player, direction, power)
 	params.InitialSpeed = GolfConfig.SWING_POWER_MULTIPLIER * ratio
 
 	simulateSimulationBall(player, ball, params, "swing trajectory")
+	printServerNetwork("Send", "TrackBallEvent", player)
 	TrackBallEvent:FireClient(player, ball.Name)
 	playSimulationBall(player, ball, true, "swing trajectory")
 	ball.Paused:Wait()
@@ -527,6 +551,7 @@ SwingEvent.OnServerEvent:Connect(function(player, direction, power)
 		triggerGoal(player, data, finalCF.Position)
 	else
 		data.swinging = false
+		printServerNetwork("Send", "BallReady", player, "snapCamera=false")
 		BallReadyEvent:FireClient(player, ball.Name, false)
 	end
 end)
