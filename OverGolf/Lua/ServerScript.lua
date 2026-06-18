@@ -19,11 +19,9 @@ local GolfScoring = require(GolfShared:WaitForChild("GolfScoring"))
 -- RemoteEvents
 -- ─────────────────────────────────────────
 local Remotes = GolfRemotes.GetAllServer()
-local SwingEvent            = Remotes.SwingEvent
 local BallReadyEvent        = Remotes.BallReady
 local ClearEvent            = Remotes.ClearEvent
 local GoalAnimEvent         = Remotes.GoalAnim
-local TrackBallEvent        = Remotes.TrackBallEvent
 local WallHitEvent          = Remotes.WallHitEvent
 local SlotAssignEvent       = Remotes.SlotAssign
 local GoalResultEvent       = Remotes.GoalResult
@@ -165,18 +163,6 @@ local function setSimulationBallPathMarker(player, ball, enabled, reason)
 	-- EnablePathMarker 변경은 시뮬레이션 경로 표시 상태를 바꿉니다.
 	printBallState(player, ball, "EnablePathMarker=" .. tostring(enabled), reason)
 	ball.EnablePathMarker = enabled
-end
-
-local function simulateSimulationBall(player, ball, params, reason)
-	-- Simulate 호출은 현재 CFrame과 파라미터로 새 궤적 스냅샷을 계산합니다.
-	printBallState(player, ball, "Simulate()", reason)
-	ball:Simulate(params)
-end
-
-local function playSimulationBall(player, ball, reset, reason)
-	-- Play 호출은 계산된 궤적 재생 상태로 전환합니다.
-	printBallState(player, ball, "Play(" .. tostring(reset) .. ")", reason)
-	ball:Play(reset)
 end
 
 local function destroySimulationBall(player, ball, reason)
@@ -485,73 +471,5 @@ StartGameEvent.OnServerEvent:Connect(function(player)
 	if character then
 		-- 이때 플레이어의 캐릭터를 투명하게 만들고 1번 홀 공을 세팅합니다.
 		task.spawn(setupBallForPlayer, player, character, 1)
-	end
-end)
-
--- ─────────────────────────────────────────
--- Swing Event
--- ─────────────────────────────────────────
-SwingEvent.OnServerEvent:Connect(function(player, direction, power)
-	local data = playerData[player.UserId]
-	if not data or data.swinging or data.cleared then return end
-	local ball = getServerPlayerBall(player)
-	if not ball or not ball.Parent then return end
-
-	data.swingCount = (data.swingCount or 0) + 1
-	data.swinging = true
-
-	-- 첫 샷 직후에는 BallCFrame 갱신이 늦을 수 있어 서버가 저장한 안정 위치를 우선 사용합니다.
-	local startCFrame = data.lastCFrame or ball.CFrame or ball.BallCFrame
-	local startPos = startCFrame.Position
-	local dir = Vector3.new(direction.X, 0, direction.Z)
-	if dir.Magnitude < 0.001 then dir = Vector3.new(0, 0, -1) end
-	dir = dir.Unit
-
-	local shotOrigin = startPos + Vector3.new(0, 3, 0)
-	local startCF = CFrame.lookAt(shotOrigin, shotOrigin + dir * 10, Vector3.yAxis)
-	local swingDetail = string.format(
-		"power=%.2f dir=(%.3f, %.3f, %.3f) pos=(%.3f, %.3f, %.3f)",
-		power,
-		dir.X, dir.Y, dir.Z,
-		shotOrigin.X, shotOrigin.Y, shotOrigin.Z
-	)
-	printServerNetwork("Receive", "SwingEvent", player, swingDetail)
-	stopSimulationBall(player, ball, "prepare swing | " .. swingDetail)
-	setSimulationBallPlaybackTime(player, ball, 0, "prepare swing | " .. swingDetail)
-	setSimulationBallCFrame(player, ball, startCF, "prepare swing | " .. swingDetail)
-	setSimulationBallPathMarker(player, ball, true, "prepare swing | " .. swingDetail)
-	data.isSimulating = true
-
-	local ratio = math.clamp(power / 100, 0, 1)
-	local params = ball:GetEditorBallSimParams()
-	params.Simsteps = GolfConfig.SIMULATION_STEPS
-	params.StepsPerSecond = GolfConfig.SIMULATION_STEPS_PER_SECOND
-	params.InitialSpeed = GolfConfig.SWING_POWER_MULTIPLIER * ratio
-
-	simulateSimulationBall(player, ball, params, "swing trajectory")
-	printServerNetwork("Send", "TrackBallEvent", player)
-	TrackBallEvent:FireClient(player, ball.Name)
-	playSimulationBall(player, ball, true, "swing trajectory")
-	ball.Paused:Wait()
-
-	if playerData[player.UserId] ~= data or data.cleared then return end
-	if not ball.Parent then return end
-
-	local finalCF = ball.BallCFrame
-	data.lastCFrame = finalCF
-	data.isSimulating = false
-
-	local goalPart = data.goalPart
-	local goalRadius = math.min(goalPart.Size.X, goalPart.Size.Z) / 2 * 0.25
-	local rel = goalPart.CFrame:PointToObjectSpace(finalCF.Position)
-	local dist2D = math.sqrt(rel.X^2 + rel.Z^2)
-	local isGoal = dist2D <= goalRadius
-
-	if isGoal then
-		triggerGoal(player, data, finalCF.Position)
-	else
-		data.swinging = false
-		printServerNetwork("Send", "BallReady", player, "snapCamera=false")
-		BallReadyEvent:FireClient(player, ball.Name, false)
 	end
 end)

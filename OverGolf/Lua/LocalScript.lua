@@ -19,9 +19,7 @@ local player = Players.LocalPlayer
 local camera = workspace.CurrentCamera
 
 local Remotes = GolfRemotes.GetAllClient()
-local SwingEvent            = Remotes.SwingEvent
 local BallReadyEvent        = Remotes.BallReady
-local TrackBallEvent        = Remotes.TrackBallEvent
 local ClearEvent            = Remotes.ClearEvent
 local GoalAnimEvent         = Remotes.GoalAnim
 local WallHitEvent          = Remotes.WallHitEvent
@@ -296,13 +294,11 @@ end
 local function doSwing()
 	if not canSwing or not playerBall then return end
 
-	local hasBallParent, ballParent = pcall(function()
-		return playerBall.Parent
+	local hasBallCFrame, ballCFrame = pcall(function()
+		return playerBall.BallCFrame
 	end)
-	if not hasBallParent or not ballParent then
-		if playerBall then
-			playerBall = nil
-		end
+	if not hasBallCFrame or not ballCFrame then
+		playerBall = nil
 		return
 	end
 
@@ -325,8 +321,37 @@ local function doSwing()
 	local dir  = Vector3.new(look.X, 0, look.Z)
 	if dir.Magnitude < 0.001 then dir = Vector3.new(0, 0, -1) end
 	local shotDir = dir.Unit
-	printClientNetwork("Send", "SwingEvent", string.format("power=%.2f dir=(%.3f, %.3f, %.3f)", currentPower, shotDir.X, shotDir.Y, shotDir.Z))
-	SwingEvent:FireServer(shotDir, currentPower)
+	local shotOrigin = ballCFrame.Position + Vector3.new(0, 3, 0)
+	local startCF = CFrame.lookAt(shotOrigin, shotOrigin + shotDir * 10, Vector3.yAxis)
+	local swingDetail = string.format(
+		"power=%.2f dir=(%.3f, %.3f, %.3f) pos=(%.3f, %.3f, %.3f)",
+		currentPower,
+		shotDir.X, shotDir.Y, shotDir.Z,
+		shotOrigin.X, shotOrigin.Y, shotOrigin.Z
+	)
+
+	print("[Client][SimulationBall] LocalSwing | " .. swingDetail)
+	playerBall:Stop()
+	playerBall:SetPlaybackTime(0)
+	playerBall.CFrame = startCF
+	playerBall.EnablePathMarker = true
+
+	local ratio = math.clamp(currentPower / 100, 0, 1)
+	local params = playerBall:GetEditorBallSimParams()
+	params.Simsteps = GolfConfig.SIMULATION_STEPS
+	params.StepsPerSecond = GolfConfig.SIMULATION_STEPS_PER_SECOND
+	params.InitialSpeed = GolfConfig.SWING_POWER_MULTIPLIER * ratio
+
+	playerBall:Simulate(params)
+	playerBall:Play(true)
+
+	local swingBall = playerBall
+	task.spawn(function()
+		swingBall.Paused:Wait()
+		if playerBall ~= swingBall then return end
+		canSwing = true
+		setPowerBarVisible(true)
+	end)
 end
 
 swingButton.Activated:Connect(doSwing)
@@ -421,7 +446,7 @@ GoalResultEvent.OnClientEvent:Connect(function(resultData)
 end)
 
 BallReadyEvent.OnClientEvent:Connect(function(ballName, snapCamera)
-	printClientNetwork("Receive", "BallReady", "snapCamera=" .. tostring(snapCamera))
+	printClientNetwork("Receive", "BallReady", "ballName=" .. tostring(ballName) .. " snapCamera=" .. tostring(snapCamera))
 	-- 서버에서 Clone한 SimulationBall이 클라이언트에 복제될 때까지 게임 시작 처리를 지연합니다.
 	local ball = workspace:WaitForChild(ballName)
 
@@ -438,29 +463,13 @@ BallReadyEvent.OnClientEvent:Connect(function(ballName, snapCamera)
 	end
 
 	if snapCamera then
-		local hasBallCFrame, ballCFrame = pcall(function()
-			return playerBall.BallCFrame
-		end)
-		if hasBallCFrame and ballCFrame then
-			cameraTarget.Position = ballCFrame.Position
-		else
-			playerBall = nil
-			canSwing = false
-			return
-		end
+		cameraTarget.Position = playerBall.BallCFrame.Position
 	end
 
 	camera.CameraType            = Enum.CameraType.Custom
 	camera.CameraSubject         = cameraTarget
 	player.CameraMinZoomDistance = 1250
 	player.CameraMaxZoomDistance = 5000
-end)
-
-TrackBallEvent.OnClientEvent:Connect(function(ballName)
-	printClientNetwork("Receive", "TrackBallEvent")
-	local ball = workspace:WaitForChild(ballName)
-	playerBall          = ball
-	canSwing         = false
 end)
 
 ClearEvent.OnClientEvent:Connect(function(holeNumber)
@@ -552,31 +561,28 @@ local activeDirectionIndicator = nil -- 지시기 캐시용 변수
 local directionRelativeCFrame = nil  -- 상대 위치/회전 캐시
 
 RunService.RenderStepped:Connect(function(dt)
-	local ballPos = nil
-	if playerBall then
-		local hasBallCFrame, ballCFrame = pcall(function()
-			return playerBall.BallCFrame
-		end)
-
-		if hasBallCFrame and ballCFrame then
-			ballPos = ballCFrame.Position
-		else
-			playerBall = nil
-			canSwing = false
-		end
+	if playerBall and not playerBall.Parent then
+		playerBall = nil
+		canSwing = false
 	end
 
 	-- [기존 카메라 추적 로직]
 	if isGoalAnim and goalCamTargetCFrame then
 		camera.CFrame = camera.CFrame:Lerp(goalCamTargetCFrame, math.clamp(dt * 3, 0, 1))
-	elseif ballPos then
+	elseif playerBall then
+		local ballPos = playerBall.BallCFrame.Position
 		cameraTarget.Position = cameraTarget.Position:Lerp(ballPos, math.clamp(dt * 15, 0, 1))
 	end
-	
-	updateGoldPoles(ballPos)
-	
+
+	if playerBall then
+		updateGoldPoles(playerBall.BallCFrame.Position)
+	else
+		updateGoldPoles(nil)
+	end
+
 	-- [새로 추가된 방향 지시기(Direction) 궤도 회전 로직]
-	if canSwing and ballPos then
+	if canSwing and playerBall then
+		local ballPos = playerBall.BallCFrame.Position
 		if ballPos then
 			-- 1. 파트 복제 및 초기 오프셋(Relative CFrame) 수학적 설정
 			if not activeDirectionIndicator then
@@ -634,15 +640,15 @@ RunService.RenderStepped:Connect(function(dt)
 				
 				local currentColor = Color3.fromRGB(math.round(r), math.round(g), math.round(b))
 				
-				if activeDirectionIndicator:IsA("BasePart") then
-					activeDirectionIndicator.Color = currentColor
-				else
-					for _, desc in ipairs(activeDirectionIndicator:GetDescendants()) do
-						if desc:IsA("BasePart") then
-							desc.Color = currentColor
+					if activeDirectionIndicator:IsA("BasePart") then
+						activeDirectionIndicator.Color = currentColor
+					else
+						for _, desc in ipairs(activeDirectionIndicator:GetDescendants()) do
+							if desc:IsA("BasePart") then
+								desc.Color = currentColor
+							end
 						end
 					end
-				end
 			end
 		end
 	end

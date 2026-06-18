@@ -17,11 +17,9 @@ GolfConfig.FINAL_HOLE_DELAY = 7
 GolfConfig.HOLE_PAR = {3, 4, 3, 4, 5, 3, 4, 3, 5, 4, 3, 4, 5, 3, 4, 3, 4, 5}
 
 GolfConfig.EVENT_NAMES = {
-	SwingEvent = "SwingEvent",
 	BallReady = "BallReady",
 	ClearEvent = "ClearEvent",
 	GoalAnim = "GoalAnim",
-	TrackBallEvent = "TrackBallEvent",
 	WallHitEvent = "WallHitEvent",
 	SlotAssign = "SlotAssign",
 	GoalResult = "GoalResult",
