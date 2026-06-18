@@ -215,7 +215,7 @@ local function createPlayerBall(player)
 	return ball
 end
 
-local function getPlayerBall(player)
+local function getServerPlayerBall(player)
 	return playerBalls[player.UserId]
 end
 
@@ -228,7 +228,7 @@ local function destroyPlayerBall(player)
 end
 
 local function placeSimulationBallAt(player, data, cf)
-	local ball = getPlayerBall(player)
+	local ball = getServerPlayerBall(player)
 	if not ball or not ball.Parent then
 		return nil
 	end
@@ -270,7 +270,7 @@ local function triggerGoal(player, data, stoppedPos)
 		data.goalConnection = nil
 	end
 
-	local ball    = getPlayerBall(player)
+	local ball    = getServerPlayerBall(player)
 	local goalPos = data.goalPart.Position
 
 	-- ─── 스코어 기록 ───
@@ -333,7 +333,7 @@ setupBallForPlayer = function(player, character, targetHole)
 	targetHole = targetHole or 1
 
 	local prev = playerData[player.UserId]
-	local ball = getPlayerBall(player)
+	local ball = getServerPlayerBall(player)
 	if prev and ball and ball.Parent then
 		stopSimulationBall(player, ball, "setup new hole")
 		setSimulationBallPlaybackTime(player, ball, 0, "setup new hole")
@@ -389,7 +389,7 @@ setupBallForPlayer = function(player, character, targetHole)
 			task.wait(0.2)
 			if data.cleared then break end
 	
-				local ball = getPlayerBall(player)
+				local ball = getServerPlayerBall(player)
 				if not ball or not ball.Parent then break end
 
 				local currentPos = ball.BallCFrame.Position
@@ -478,7 +478,7 @@ end)
 SwingEvent.OnServerEvent:Connect(function(player, direction, power)
 	local data = playerData[player.UserId]
 	if not data or data.swinging or data.cleared then return end
-	local ball = getPlayerBall(player)
+	local ball = getServerPlayerBall(player)
 	if not ball or not ball.Parent then return end
 
 	data.swingCount = (data.swingCount or 0) + 1
@@ -501,11 +501,6 @@ SwingEvent.OnServerEvent:Connect(function(player, direction, power)
 
 	local ratio = math.clamp(power / 100, 0, 1)
 	local params = ball:GetEditorBallSimParams()
-	params.Mass = 0.9
-	params.BaseGravity = 3200
-	params.DefaultRestitution = 0.2
-	params.DefaultFriction = 1
-	params.DampingLinear = 0.012
 	params.Simsteps = GolfConfig.SIMULATION_STEPS
 	params.StepsPerSecond = GolfConfig.SIMULATION_STEPS_PER_SECOND
 	params.InitialSpeed = GolfConfig.SWING_POWER_MULTIPLIER * ratio

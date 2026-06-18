@@ -30,6 +30,11 @@ local GoalResultEvent       = Remotes.GoalResult
 local ScoreboardUpdateEvent = Remotes.ScoreboardUpdate
 local StartGameEvent        = Remotes.StartGame
 
+local function printClientNetwork(direction, eventName, detail)
+	local detailText = detail and (" | " .. detail) or ""
+	print("[Client][Network] " .. direction .. " " .. eventName .. detailText)
+end
+
 local playerGui   = player:WaitForChild("PlayerGui")
 local screenGui   = playerGui:WaitForChild("ScreenGui")
 local bar         = screenGui:WaitForChild("Bar")
@@ -60,8 +65,8 @@ playButton.Activated:Connect(function()
 	playButton.Visible = false
 	tutorial.Visible = false
 	
-	bar.Visible = true
 	-- 서버에 게임을 시작하라고 신호를 보냅니다.
+	printClientNetwork("Send", "StartGame")
 	StartGameEvent:FireServer()
 end)
 
@@ -120,7 +125,7 @@ local soundWall     = soundsFolder:WaitForChild("Wall")
 -- ─────────────────────────────────────────
 -- State
 -- ─────────────────────────────────────────
-local targetBall          = nil
+local playerBall          = nil
 local canSwing            = false
 local currentPower        = 50
 local isGoalAnim          = false
@@ -289,7 +294,12 @@ end
 -- 스윙
 -- ─────────────────────────────────────────
 local function doSwing()
-	if not canSwing or not targetBall then return end
+	if not canSwing or not playerBall or not playerBall.Parent then
+		if playerBall and not playerBall.Parent then
+			playerBall = nil
+		end
+		return
+	end
 	canSwing = false
 	setPowerBarVisible(false)
 
@@ -401,14 +411,10 @@ GoalResultEvent.OnClientEvent:Connect(function(resultData)
 end)
 
 BallReadyEvent.OnClientEvent:Connect(function(ballName, snapCamera)
-	local ball = workspace:WaitForChild(ballName, 10)  -- ✅ 타임아웃 늘림
-	if not ball then
-		-- ✅ 못 찾아도 기존 공이 있으면 유지, 없으면 서버에서 다음 이벤트 올 때까지 대기
-		print("Error: [Golf] BallReady: ball not found: " .. tostring(ballName))
-		return
-	end
+	-- 서버에서 Clone한 SimulationBall이 클라이언트에 복제될 때까지 게임 시작 처리를 지연합니다.
+	local ball = workspace:WaitForChild(ballName)
 
-	targetBall          = ball
+	playerBall          = ball
 	canSwing            = true   -- ✅ 공 확인 후 세팅 (순서는 그대로)
 	isGoalAnim          = false
 	goalCamTargetCFrame = nil
@@ -416,11 +422,12 @@ BallReadyEvent.OnClientEvent:Connect(function(ballName, snapCamera)
 	if blockBar then
 		pendingBarShow = true
 	else
+		bar.Visible = true
 		setPowerBarVisible(true)
 	end
 
 	if snapCamera then
-		cameraTarget.Position = targetBall.BallCFrame.Position
+		cameraTarget.Position = playerBall.BallCFrame.Position
 	end
 
 	camera.CameraType            = Enum.CameraType.Custom
@@ -430,16 +437,14 @@ BallReadyEvent.OnClientEvent:Connect(function(ballName, snapCamera)
 end)
 
 TrackBallEvent.OnClientEvent:Connect(function(ballName)
-	local ball = workspace:WaitForChild(ballName, 5)
-	if ball then
-		targetBall       = ball
-		canSwing         = false
-	end
+	local ball = workspace:WaitForChild(ballName)
+	playerBall          = ball
+	canSwing         = false
 end)
 
 ClearEvent.OnClientEvent:Connect(function(holeNumber)
-	canSwing   = false
-	targetBall = nil
+	canSwing     = false
+	playerBall   = nil
 	-- Hole cleared; result and scoreboard UI handle player feedback.
 end)
 
@@ -518,30 +523,39 @@ end
 -- ─────────────────────────────────────────
 -- RenderStepped
 -- ─────────────────────────────────────────
+local activeDirectionIndicator = nil -- 지시기 캐시용 변수
+local directionRelativeCFrame = nil  -- 상대 위치/회전 캐시
+
 RunService.RenderStepped:Connect(function(dt)
+	if playerBall and not playerBall.Parent then
+		playerBall = nil
+		canSwing = false
+	end
+
 	-- [기존 카메라 추적 로직]
 	if isGoalAnim and goalCamTargetCFrame then
 		camera.CFrame = camera.CFrame:Lerp(goalCamTargetCFrame, math.clamp(dt * 3, 0, 1))
-	elseif targetBall then
-		local ballPos = targetBall.BallCFrame.Position
+	elseif playerBall then
+		local ballPos = playerBall.BallCFrame.Position
 		cameraTarget.Position = cameraTarget.Position:Lerp(ballPos, math.clamp(dt * 15, 0, 1))
 	end
 
-	if targetBall then
-		updateGoldPoles(targetBall.BallCFrame.Position)
+	if playerBall then
+		updateGoldPoles(playerBall.BallCFrame.Position)
 	else
 		updateGoldPoles(nil)
 	end
 
 	-- [새로 추가된 방향 지시기(Direction) 궤도 회전 로직]
-	if canSwing and targetBall then
-		local ballPos = targetBall.BallCFrame.Position
+	if canSwing and playerBall then
+		local ballPos = playerBall.BallCFrame.Position
 		if ballPos then
 			-- 1. 파트 복제 및 초기 오프셋(Relative CFrame) 수학적 설정
 			if not activeDirectionIndicator then
 				local template = ReplicatedStorage:FindFirstChild("Direction")
 				if template then
-					activeDirectionIndicator = template:Clone()
+					local directionIndicator = template:Clone()
+					activeDirectionIndicator = directionIndicator
 					activeDirectionIndicator.Anchored = true
 					activeDirectionIndicator.CanCollide = false
 					activeDirectionIndicator.Parent = workspace
@@ -603,8 +617,5 @@ RunService.RenderStepped:Connect(function(dt)
 					end
 			end
 		end
-	else
-		-- 스윙 중이거나 다음 홀로 넘어갈 때(canSwing == false) 지시기를 제거합니다.
-		clearDirectionIndicator()
 	end
 end)
