@@ -112,6 +112,70 @@ local function setupBallCollision(ball, player)
 	end)
 end
 
+local function printBallState(player, ball, stateName, reason)
+	local playerName = player and player.Name or "UnknownPlayer"
+	local ballName = ball and ball.Name or "UnknownBall"
+	local reasonText = reason and (" | " .. reason) or ""
+	print(string.format("[Golf][SimulationBall] player=%s ball=%s state=%s%s", playerName, ballName, stateName, reasonText))
+end
+
+local function setupBallStateLogging(ball, player)
+	-- SimulationBall 내부 재생 이벤트가 발생할 때마다 실제 상태 변화를 출력합니다.
+	ball.Played:Connect(function()
+		printBallState(player, ball, "Played", "SimulationBall event")
+	end)
+
+	ball.Paused:Connect(function()
+		printBallState(player, ball, "Paused", "SimulationBall event")
+	end)
+
+	ball.Stopped:Connect(function()
+		printBallState(player, ball, "Stopped", "SimulationBall event")
+	end)
+end
+
+local function stopSimulationBall(player, ball, reason)
+	-- Stop 호출은 재생/시뮬레이션 상태를 초기 정지 상태로 바꿉니다.
+	printBallState(player, ball, "Stop()", reason)
+	ball:Stop()
+end
+
+local function setSimulationBallPlaybackTime(player, ball, playbackTime, reason)
+	-- PlaybackTime 변경은 현재 재생 커서를 지정 시간으로 이동시킵니다.
+	printBallState(player, ball, "SetPlaybackTime(" .. tostring(playbackTime) .. ")", reason)
+	ball:SetPlaybackTime(playbackTime)
+end
+
+local function setSimulationBallCFrame(player, ball, cf, reason)
+	-- CFrame 변경은 다음 시뮬레이션 시작 위치/방향 또는 현재 공 위치를 바꿉니다.
+	printBallState(player, ball, "CFrame", reason)
+	ball.CFrame = cf
+end
+
+local function setSimulationBallPathMarker(player, ball, enabled, reason)
+	-- EnablePathMarker 변경은 시뮬레이션 경로 표시 상태를 바꿉니다.
+	printBallState(player, ball, "EnablePathMarker=" .. tostring(enabled), reason)
+	ball.EnablePathMarker = enabled
+end
+
+local function simulateSimulationBall(player, ball, params, reason)
+	-- Simulate 호출은 현재 CFrame과 파라미터로 새 궤적 스냅샷을 계산합니다.
+	printBallState(player, ball, "Simulate()", reason)
+	ball:Simulate(params)
+end
+
+local function playSimulationBall(player, ball, reset, reason)
+	-- Play 호출은 계산된 궤적 재생 상태로 전환합니다.
+	printBallState(player, ball, "Play(" .. tostring(reset) .. ")", reason)
+	ball:Play(reset)
+end
+
+local function destroySimulationBall(player, ball, reason)
+	-- Destroy 호출은 플레이어 소유 SimulationBall 인스턴스를 제거합니다.
+	printBallState(player, ball, "Destroy()", reason)
+	ball:Destroy()
+end
+
 -- ─────────────────────────────────────────
 -- Player data
 -- ─────────────────────────────────────────
@@ -135,16 +199,17 @@ end
 local function createPlayerBall(player)
 	local oldBall = playerBalls[player.UserId]
 	if oldBall and oldBall.Parent then
-		oldBall:Destroy()
+		destroySimulationBall(player, oldBall, "replace old player ball")
 	end
 
 	local ballTemplate = ServerStorage:WaitForChild("Ball")
 	local ball = ballTemplate:Clone()
 	ball.Name = "GolfBall_" .. tostring(player.UserId)
 	ball.Parent = Workspace
-	ball:Stop()
-	ball:SetPlaybackTime(0)
+	stopSimulationBall(player, ball, "initialize cloned ball")
+	setSimulationBallPlaybackTime(player, ball, 0, "initialize cloned ball")
 	setupBallCollision(ball, player)
+	setupBallStateLogging(ball, player)
 	playerBalls[player.UserId] = ball
 
 	return ball
@@ -157,7 +222,7 @@ end
 local function destroyPlayerBall(player)
 	local ball = playerBalls[player.UserId]
 	if ball and ball.Parent then
-		ball:Destroy()
+		destroySimulationBall(player, ball, "player removing")
 	end
 	playerBalls[player.UserId] = nil
 end
@@ -168,9 +233,9 @@ local function placeSimulationBallAt(player, data, cf)
 		return nil
 	end
 
-	ball:Stop()
-	ball:SetPlaybackTime(0)
-	ball.CFrame = cf
+	stopSimulationBall(player, ball, "place ball at hole start")
+	setSimulationBallPlaybackTime(player, ball, 0, "place ball at hole start")
+	setSimulationBallCFrame(player, ball, cf, "place ball at hole start")
 
 	data.isSimulating = false
 
@@ -179,7 +244,7 @@ end
 
 local setupBallForPlayer
 
-local function playGoalSuctionAnim(ball, startPos, goalPos)
+local function playGoalSuctionAnim(player, ball, startPos, goalPos)
 	local STEPS = 30
 	local INTERVAL = 1 / 30
 
@@ -190,7 +255,7 @@ local function playGoalSuctionAnim(ball, startPos, goalPos)
 		local newX = startPos.X + (goalPos.X - startPos.X) * xzT
 		local newZ = startPos.Z + (goalPos.Z - startPos.Z) * xzT
 		local newY = startPos.Y
-		ball.CFrame = CFrame.new(newX, newY, newZ)
+		setSimulationBallCFrame(player, ball, CFrame.new(newX, newY, newZ), "goal suction step " .. tostring(i) .. "/" .. tostring(STEPS))
 		task.wait(INTERVAL)
 	end
 end
@@ -236,11 +301,11 @@ local function triggerGoal(player, data, stoppedPos)
 	if ball and ball.Parent then
 		local yDiff = stoppedPos.Y - goalPos.Y
 		if yDiff > SUCTION_Y_THRESHOLD then
-			playGoalSuctionAnim(ball, stoppedPos, goalPos)
+			playGoalSuctionAnim(player, ball, stoppedPos, goalPos)
 		end
 		task.wait(0.2)
-		ball:Stop()
-		ball:SetPlaybackTime(0)
+		stopSimulationBall(player, ball, "goal resolved")
+		setSimulationBallPlaybackTime(player, ball, 0, "goal resolved")
 	end
 
 	playerData[player.UserId] = nil
@@ -270,8 +335,8 @@ setupBallForPlayer = function(player, character, targetHole)
 	local prev = playerData[player.UserId]
 	local ball = getPlayerBall(player)
 	if prev and ball and ball.Parent then
-		ball:Stop()
-		ball:SetPlaybackTime(0)
+		stopSimulationBall(player, ball, "setup new hole")
+		setSimulationBallPlaybackTime(player, ball, 0, "setup new hole")
 	end
 	playerData[player.UserId] = nil
 
@@ -342,9 +407,9 @@ setupBallForPlayer = function(player, character, targetHole)
 					local hitHoleNum = parentName:match("^Hole(%d+)$")
 					if hitHoleNum and tonumber(hitHoleNum) ~= data.currentHole then
 						if not data.swinging then
-							ball:Stop()
-							ball.CFrame = data.lastCFrame
-							ball:SetPlaybackTime(0)
+							stopSimulationBall(player, ball, "reset from other hole field")
+							setSimulationBallCFrame(player, ball, data.lastCFrame, "reset from other hole field")
+							setSimulationBallPlaybackTime(player, ball, 0, "reset from other hole field")
 							BallReadyEvent:FireClient(player, ball.Name, true)
 						end
 						skipGoalCheck = true
@@ -372,9 +437,9 @@ setupBallForPlayer = function(player, character, targetHole)
 					end
 					elseif currentPos.Y < -150 then
 						if not data.swinging then
-							ball:Stop()
-							ball.CFrame = data.lastCFrame
-							ball:SetPlaybackTime(0)
+							stopSimulationBall(player, ball, "reset from fall")
+							setSimulationBallCFrame(player, ball, data.lastCFrame, "reset from fall")
+							setSimulationBallPlaybackTime(player, ball, 0, "reset from fall")
 							BallReadyEvent:FireClient(player, ball.Name, true)
 						end
 					end
@@ -428,10 +493,10 @@ SwingEvent.OnServerEvent:Connect(function(player, direction, power)
 
 	local shotOrigin = startPos + Vector3.new(0, 3, 0)
 	local startCF = CFrame.lookAt(shotOrigin, shotOrigin + dir * 10, Vector3.yAxis)
-	ball:Stop()
-	ball:SetPlaybackTime(0)
-	ball.CFrame = startCF
-	ball.EnablePathMarker = true
+	stopSimulationBall(player, ball, "prepare swing")
+	setSimulationBallPlaybackTime(player, ball, 0, "prepare swing")
+	setSimulationBallCFrame(player, ball, startCF, "prepare swing")
+	setSimulationBallPathMarker(player, ball, true, "prepare swing")
 	data.isSimulating = true
 
 	local ratio = math.clamp(power / 100, 0, 1)
@@ -445,9 +510,9 @@ SwingEvent.OnServerEvent:Connect(function(player, direction, power)
 	params.StepsPerSecond = GolfConfig.SIMULATION_STEPS_PER_SECOND
 	params.InitialSpeed = GolfConfig.SWING_POWER_MULTIPLIER * ratio
 
-	ball:Simulate(params)
+	simulateSimulationBall(player, ball, params, "swing trajectory")
 	TrackBallEvent:FireClient(player, ball.Name)
-	ball:Play(true)
+	playSimulationBall(player, ball, true, "swing trajectory")
 	ball.Paused:Wait()
 
 	if playerData[player.UserId] ~= data or data.cleared then return end
