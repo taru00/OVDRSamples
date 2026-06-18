@@ -172,7 +172,6 @@ local function placeSimulationBallAt(player, data, cf)
 	ball:SetPlaybackTime(0)
 	ball.CFrame = cf
 
-	data.activeBall = ball
 	data.isSimulating = false
 
 	return ball
@@ -206,7 +205,7 @@ local function triggerGoal(player, data, stoppedPos)
 		data.goalConnection = nil
 	end
 
-	local ball    = data.activeBall
+	local ball    = getPlayerBall(player)
 	local goalPos = data.goalPart.Position
 
 	-- ─── 스코어 기록 ───
@@ -269,9 +268,10 @@ setupBallForPlayer = function(player, character, targetHole)
 	targetHole = targetHole or 1
 
 	local prev = playerData[player.UserId]
-	if prev and prev.activeBall and prev.activeBall.Parent then
-		prev.activeBall:Stop()
-		prev.activeBall:SetPlaybackTime(0)
+	local ball = getPlayerBall(player)
+	if prev and ball and ball.Parent then
+		ball:Stop()
+		ball:SetPlaybackTime(0)
 	end
 	playerData[player.UserId] = nil
 
@@ -295,7 +295,6 @@ setupBallForPlayer = function(player, character, targetHole)
 	local spawnCF    = randomCFrameInsidePart(startPart)
 
 	local data = {
-		activeBall     = nil,
 		isSimulating   = false,
 		lastCFrame     = spawnCF,
 		goalPart       = goalPart,
@@ -321,11 +320,13 @@ setupBallForPlayer = function(player, character, targetHole)
 	end
 
 	task.spawn(function()
-		while data and data.activeBall and data.activeBall.Parent and playerData[player.UserId] == data do
+		while playerData[player.UserId] == data do
 			task.wait(0.2)
 			if data.cleared then break end
 	
-				local ball = data.activeBall
+				local ball = getPlayerBall(player)
+				if not ball or not ball.Parent then break end
+
 				local currentPos = ball.BallCFrame.Position
 				if playerData[player.UserId] ~= data then break end
 		
@@ -341,10 +342,10 @@ setupBallForPlayer = function(player, character, targetHole)
 					local hitHoleNum = parentName:match("^Hole(%d+)$")
 					if hitHoleNum and tonumber(hitHoleNum) ~= data.currentHole then
 						if not data.swinging then
-							data.activeBall:Stop()
-							data.activeBall.CFrame = data.lastCFrame
-							data.activeBall:SetPlaybackTime(0)
-							BallReadyEvent:FireClient(player, data.activeBall.Name, true)
+							ball:Stop()
+							ball.CFrame = data.lastCFrame
+							ball:SetPlaybackTime(0)
+							BallReadyEvent:FireClient(player, ball.Name, true)
 						end
 						skipGoalCheck = true
 					end
@@ -371,10 +372,10 @@ setupBallForPlayer = function(player, character, targetHole)
 					end
 					elseif currentPos.Y < -150 then
 						if not data.swinging then
-							data.activeBall:Stop()
-							data.activeBall.CFrame = data.lastCFrame
-							data.activeBall:SetPlaybackTime(0)
-							BallReadyEvent:FireClient(player, data.activeBall.Name, true)
+							ball:Stop()
+							ball.CFrame = data.lastCFrame
+							ball:SetPlaybackTime(0)
+							BallReadyEvent:FireClient(player, ball.Name, true)
 						end
 					end
 			end
@@ -412,12 +413,12 @@ end)
 SwingEvent.OnServerEvent:Connect(function(player, direction, power)
 	local data = playerData[player.UserId]
 	if not data or data.swinging or data.cleared then return end
-	if not data.activeBall or not data.activeBall.Parent then return end
+	local ball = getPlayerBall(player)
+	if not ball or not ball.Parent then return end
 
 	data.swingCount = (data.swingCount or 0) + 1
 	data.swinging = true
 
-	local ball = data.activeBall
 	-- 첫 샷 직후에는 BallCFrame 갱신이 늦을 수 있어 서버가 저장한 안정 위치를 우선 사용합니다.
 	local startCFrame = data.lastCFrame or ball.CFrame or ball.BallCFrame
 	local startPos = startCFrame.Position
