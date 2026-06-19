@@ -159,12 +159,6 @@ local function setSimulationBallCFrame(player, ball, cf, reason)
 	ball.CFrame = cf
 end
 
-local function setSimulationBallPathMarker(player, ball, enabled, reason)
-	-- EnablePathMarker 변경은 시뮬레이션 경로 표시 상태를 바꿉니다.
-	printBallState(player, ball, "EnablePathMarker=" .. tostring(enabled), reason)
-	ball.EnablePathMarker = enabled
-end
-
 local function destroySimulationBall(player, ball, reason)
 	-- Destroy 호출은 플레이어 소유 SimulationBall 인스턴스를 제거합니다.
 	printBallState(player, ball, "Destroy()", reason)
@@ -206,6 +200,7 @@ local function createPlayerBall(player)
 	setupBallCollision(ball, player)
 	setupBallStateLogging(ball, player)
 	playerBalls[player.UserId] = ball
+	print("[Server][Game] CreatePlayerBall player=" .. player.Name .. " stored=true")
 
 	return ball
 end
@@ -220,14 +215,22 @@ local function destroyPlayerBall(player)
 		destroySimulationBall(player, ball, "player removing")
 	end
 	playerBalls[player.UserId] = nil
+	print("[Server][Game] DestroyPlayerBall player=" .. player.Name .. " stored=false")
 end
 
 local function placeSimulationBallAt(player, data, cf)
 	local ball = getServerPlayerBall(player)
 	if not ball or not ball.Parent then
+		print("[Server][Game] PlaceBallFailed player=" .. player.Name)
 		return nil
 	end
 
+	print(string.format(
+		"[Server][Game] PlaceBallAtStart player=%s hole=%s pos=(%.3f, %.3f, %.3f)",
+		player.Name,
+		tostring(data.currentHole),
+		cf.Position.X, cf.Position.Y, cf.Position.Z
+	))
 	stopSimulationBall(player, ball, "place ball at hole start")
 	setSimulationBallPlaybackTime(player, ball, 0, "place ball at hole start")
 	setSimulationBallCFrame(player, ball, cf, "place ball at hole start")
@@ -272,6 +275,12 @@ local function triggerGoal(player, data, stoppedPos)
 	local clearedHole = data.currentHole
 	local swings      = data.swingCount or 0
 	local elapsed     = os.clock() - (data.holeStartTime or os.clock())
+	print(string.format(
+		"[Server][Game] GoalDetected player=%s hole=%s pos=(%.3f, %.3f, %.3f)",
+		player.Name,
+		tostring(clearedHole),
+		stoppedPos.X, stoppedPos.Y, stoppedPos.Z
+	))
 
 	if not playerScores[player.UserId] then
 		playerScores[player.UserId] = {}
@@ -279,6 +288,14 @@ local function triggerGoal(player, data, stoppedPos)
 	playerScores[player.UserId][clearedHole] = swings
 
 	local term, exp, point = GolfScoring.GetScoreInfo(swings, clearedHole)
+	print(string.format(
+		"[Server][Game] ScoreRecorded player=%s hole=%s swings=%s term=%s elapsed=%.3f",
+		player.Name,
+		tostring(clearedHole),
+		tostring(swings),
+		tostring(term),
+		elapsed
+	))
 
 	-- ─── 결과 전송 (GoalAnim과 동시에) ───
 	printServerNetwork("Send", "GoalResult", player, "hole=" .. tostring(clearedHole) .. " swings=" .. tostring(swings))
@@ -317,6 +334,7 @@ local function triggerGoal(player, data, stoppedPos)
 
 	-- ✅ 최종 홀이면 스코어보드 충분히 보여준 뒤 hole 1로
 	local delayTime = (clearedHole == MAX_HOLE) and GolfConfig.FINAL_HOLE_DELAY or GolfConfig.NEXT_HOLE_DELAY
+	print("[Server][Game] ScheduleNextHole player=" .. player.Name .. " fromHole=" .. tostring(clearedHole) .. " nextHole=" .. tostring(nextHole) .. " delay=" .. tostring(delayTime))
 
 	-- 클라이언트에서 Result(3.5s) + Scoreboard(3s) = 약 6.5s 이후 다음 홀 준비
 	-- BallReadyEvent가 blockBar 중 도착해도 pendingBarShow로 처리됨
@@ -329,10 +347,12 @@ end
 
 setupBallForPlayer = function(player, character, targetHole)
 	targetHole = targetHole or 1
+	print("[Server][Game] SetupHole player=" .. player.Name .. " hole=" .. tostring(targetHole))
 
 	local prev = playerData[player.UserId]
 	local ball = getServerPlayerBall(player)
 	if prev and ball and ball.Parent then
+		print("[Server][Game] ResetPreviousHoleBall player=" .. player.Name .. " hole=" .. tostring(prev.currentHole))
 		stopSimulationBall(player, ball, "setup new hole")
 		setSimulationBallPlaybackTime(player, ball, 0, "setup new hole")
 	end
@@ -406,6 +426,7 @@ setupBallForPlayer = function(player, character, targetHole)
 					local hitHoleNum = parentName:match("^Hole(%d+)$")
 					if hitHoleNum and tonumber(hitHoleNum) ~= data.currentHole then
 						if not data.swinging then
+							print("[Server][Game] ResetBall player=" .. player.Name .. " reason=otherHole currentHole=" .. tostring(data.currentHole) .. " hitHole=" .. tostring(hitHoleNum))
 							stopSimulationBall(player, ball, "reset from other hole field")
 							setSimulationBallCFrame(player, ball, data.lastCFrame, "reset from other hole field")
 							setSimulationBallPlaybackTime(player, ball, 0, "reset from other hole field")
@@ -437,6 +458,7 @@ setupBallForPlayer = function(player, character, targetHole)
 					end
 					elseif currentPos.Y < -150 then
 						if not data.swinging then
+							print("[Server][Game] ResetBall player=" .. player.Name .. " reason=fall y=" .. tostring(currentPos.Y))
 							stopSimulationBall(player, ball, "reset from fall")
 							setSimulationBallCFrame(player, ball, data.lastCFrame, "reset from fall")
 							setSimulationBallPlaybackTime(player, ball, 0, "reset from fall")
