@@ -27,6 +27,7 @@ local SlotAssignEvent       = Remotes.SlotAssign
 local GoalResultEvent       = Remotes.GoalResult
 local ScoreboardUpdateEvent = Remotes.ScoreboardUpdate
 local StartGameEvent        = Remotes.StartGame
+local GoalReachedEvent      = Remotes.GoalReached
 
 local function printServerNetwork(direction, eventName, player, detail)
 	local playerName = player and player.Name or "AllPlayers"
@@ -157,24 +158,6 @@ local function setupBallStateLogging(ball, player)
 	end)
 end
 
-local function stopSimulationBall(player, ball, reason)
-	-- Stop 호출은 재생/시뮬레이션 상태를 초기 정지 상태로 바꿉니다.
-	printBallState(player, ball, "Stop()", reason)
-	ball:Stop()
-end
-
-local function setSimulationBallPlaybackTime(player, ball, playbackTime, reason)
-	-- PlaybackTime 변경은 현재 재생 커서를 지정 시간으로 이동시킵니다.
-	printBallState(player, ball, "SetPlaybackTime(" .. tostring(playbackTime) .. ")", reason)
-	ball:SetPlaybackTime(playbackTime)
-end
-
-local function setSimulationBallCFrame(player, ball, cf, reason)
-	-- CFrame 변경은 다음 시뮬레이션 시작 위치/방향 또는 현재 공 위치를 바꿉니다.
-	printBallState(player, ball, "CFrame", reason)
-	ball.CFrame = cf
-end
-
 local function destroySimulationBall(player, ball, reason)
 	-- Destroy 호출은 플레이어 소유 SimulationBall 인스턴스를 제거합니다.
 	printBallState(player, ball, "Destroy()", reason)
@@ -211,8 +194,6 @@ local function createPlayerBall(player)
 	local ball = ballTemplate:Clone()
 	ball.Name = "GolfBall_" .. tostring(player.UserId)
 	ball.Parent = Workspace
-	stopSimulationBall(player, ball, "initialize cloned ball")
-	setSimulationBallPlaybackTime(player, ball, 0, "initialize cloned ball")
 	setupBallCollision(ball, player)
 	setupBallStateLogging(ball, player)
 	playerBalls[player.UserId] = ball
@@ -247,32 +228,12 @@ local function placeSimulationBallAt(player, data, cf)
 		tostring(data.currentHole),
 		cf.Position.X, cf.Position.Y, cf.Position.Z
 	))
-	stopSimulationBall(player, ball, "place ball at hole start")
-	setSimulationBallPlaybackTime(player, ball, 0, "place ball at hole start")
-	setSimulationBallCFrame(player, ball, cf, "place ball at hole start")
-
 	data.isSimulating = false
 
 	return ball
 end
 
 local setupBallForPlayer
-
-local function playGoalSuctionAnim(player, ball, startPos, goalPos)
-	local STEPS = 30
-	local INTERVAL = 1 / 30
-
-	for i = 1, STEPS do
-		if not ball or not ball.Parent then break end
-		local t = i / STEPS
-		local xzT = math.log(1 + t * 9) / math.log(10)
-		local newX = startPos.X + (goalPos.X - startPos.X) * xzT
-		local newZ = startPos.Z + (goalPos.Z - startPos.Z) * xzT
-		local newY = startPos.Y
-		setSimulationBallCFrame(player, ball, CFrame.new(newX, newY, newZ), "goal suction step " .. tostring(i) .. "/" .. tostring(STEPS))
-		task.wait(INTERVAL)
-	end
-end
 
 local function triggerGoal(player, data, stoppedPos)
 	if data.cleared then return end
@@ -284,7 +245,6 @@ local function triggerGoal(player, data, stoppedPos)
 		data.goalConnection = nil
 	end
 
-	local ball    = getServerPlayerBall(player)
 	local goalPos = data.goalPart.Position
 
 	-- ─── 스코어 기록 ───
@@ -328,15 +288,7 @@ local function triggerGoal(player, data, stoppedPos)
 
 	task.wait(1.5)
 
-	if ball and ball.Parent then
-		local yDiff = stoppedPos.Y - goalPos.Y
-		if yDiff > SUCTION_Y_THRESHOLD then
-			playGoalSuctionAnim(player, ball, stoppedPos, goalPos)
-		end
-		task.wait(0.2)
-		stopSimulationBall(player, ball, "goal resolved")
-		setSimulationBallPlaybackTime(player, ball, 0, "goal resolved")
-	end
+	task.wait(2.7)
 
 	playerData[player.UserId] = nil
 	printServerNetwork("Send", "ClearEvent", player, "hole=" .. tostring(clearedHole))
@@ -369,8 +321,6 @@ setupBallForPlayer = function(player, character, targetHole)
 	local ball = getServerPlayerBall(player)
 	if prev and ball and ball.Parent then
 		print("[Server][Game] ResetPreviousHoleBall player=" .. player.Name .. " hole=" .. tostring(prev.currentHole))
-		stopSimulationBall(player, ball, "setup new hole")
-		setSimulationBallPlaybackTime(player, ball, 0, "setup new hole")
 	end
 	playerData[player.UserId] = nil
 
@@ -416,75 +366,8 @@ setupBallForPlayer = function(player, character, targetHole)
 	task.wait(GolfConfig.BALL_READY_DELAY)
 	if playerData[player.UserId] == data and ball and ball.Parent then
 		printServerNetwork("Send", "BallReady", player, "snapCamera=true")
-		BallReadyEvent:FireClient(player, ball.Name, true)
+		BallReadyEvent:FireClient(player, ball.Name, true, targetHole, spawnCF)
 	end
-
-	task.spawn(function()
-		while playerData[player.UserId] == data do
-			task.wait(0.2)
-			if data.cleared then break end
-	
-				local ball = getServerPlayerBall(player)
-				if not ball or not ball.Parent then break end
-
-				local currentPos = ball.BallCFrame.Position
-				if playerData[player.UserId] ~= data then break end
-		
-				-- ✅ 다른 홀 필드 체크
-				local rayResult = workspace:Raycast(
-					currentPos + Vector3.new(0, 5, 0),
-					Vector3.new(0, -20, 0)
-				)
-				local skipGoalCheck = false
-				if rayResult and rayResult.Instance then
-					local parent = rayResult.Instance.Parent
-					local parentName = parent and parent.Name or ""
-					local hitHoleNum = parentName:match("^Hole(%d+)$")
-					if hitHoleNum and tonumber(hitHoleNum) ~= data.currentHole then
-						if not data.swinging then
-							print("[Server][Game] ResetBall player=" .. player.Name .. " reason=otherHole currentHole=" .. tostring(data.currentHole) .. " hitHole=" .. tostring(hitHoleNum))
-							stopSimulationBall(player, ball, "reset from other hole field")
-							setSimulationBallCFrame(player, ball, data.lastCFrame, "reset from other hole field")
-							setSimulationBallPlaybackTime(player, ball, 0, "reset from other hole field")
-							printServerNetwork("Send", "BallReady", player, "snapCamera=true")
-							BallReadyEvent:FireClient(player, ball.Name, true)
-						end
-						skipGoalCheck = true
-					end
-				end
-	
-			-- 기존 골 판정
-			if not skipGoalCheck then
-				local gPart   = data.goalPart
-				local gRadius = math.min(gPart.Size.X, gPart.Size.Z) / 2 * 0.6
-				local rel     = gPart.CFrame:PointToObjectSpace(currentPos)
-				local dist2D  = math.sqrt(rel.X^2 + rel.Z^2)
-		
-				if dist2D <= gRadius and currentPos.Y < gPart.Position.Y + 2 and currentPos.Y > gPart.Position.Y - 50 then
-					triggerGoal(player, data, currentPos)
-				elseif data.currentHole == 18 then
-					-- ✅ hole 18은 Goal 파트에 닿기만 하면 골
-					local rel18  = gPart.CFrame:PointToObjectSpace(currentPos)
-					local halfX  = gPart.Size.X / 2
-					local halfZ  = gPart.Size.Z / 2
-					if math.abs(rel18.X) <= halfX and math.abs(rel18.Z) <= halfZ
-						and currentPos.Y < gPart.Position.Y + 10
-						and currentPos.Y > gPart.Position.Y - 50 then
-						triggerGoal(player, data, currentPos)
-					end
-					elseif currentPos.Y < -150 then
-						if not data.swinging then
-							print("[Server][Game] ResetBall player=" .. player.Name .. " reason=fall y=" .. tostring(currentPos.Y))
-							stopSimulationBall(player, ball, "reset from fall")
-							setSimulationBallCFrame(player, ball, data.lastCFrame, "reset from fall")
-							setSimulationBallPlaybackTime(player, ball, 0, "reset from fall")
-							printServerNetwork("Send", "BallReady", player, "snapCamera=true")
-							BallReadyEvent:FireClient(player, ball.Name, true)
-						end
-					end
-			end
-		end
-	end)
 end
 
 Players.PlayerAdded:Connect(function(player)
@@ -510,4 +393,13 @@ StartGameEvent.OnServerEvent:Connect(function(player)
 		-- 이때 플레이어의 캐릭터를 투명하게 만들고 1번 홀 공을 세팅합니다.
 		task.spawn(setupBallForPlayer, player, character, 1)
 	end
+end)
+
+GoalReachedEvent.OnServerEvent:Connect(function(player, stoppedPos, swingCount)
+	printServerNetwork("Receive", "GoalReached", player, "swings=" .. tostring(swingCount))
+	local data = playerData[player.UserId]
+	if not data or data.cleared then return end
+
+	data.swingCount = tonumber(swingCount) or data.swingCount or 0
+	triggerGoal(player, data, stoppedPos)
 end)

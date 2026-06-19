@@ -27,6 +27,7 @@ local SlotAssignEvent       = Remotes.SlotAssign
 local GoalResultEvent       = Remotes.GoalResult
 local ScoreboardUpdateEvent = Remotes.ScoreboardUpdate
 local StartGameEvent        = Remotes.StartGame
+local GoalReachedEvent      = Remotes.GoalReached
 
 local function printClientNetwork(direction, eventName, detail)
 	local detailText = detail and (" | " .. detail) or ""
@@ -130,6 +131,11 @@ local currentPower        = 50
 local aimDir              = Vector3.new(0, 0, -1)
 local isGoalAnim          = false
 local goalCamTargetCFrame = nil
+local currentHole         = nil
+local currentGoalPart     = nil
+local lastBallCFrame      = nil
+local localSwingCount     = 0
+local goalReportSent      = false
 
 local blockBar          = false  -- Result/Scoreboard 표시 중 bar 억제
 local pendingBarShow    = false  -- blockBar 해제 시 bar 올릴 예약
@@ -292,6 +298,50 @@ local function showScoreboard()
 	end)
 end
 
+local function placeLocalBallAt(ball, cf, reason)
+	if not ball or not cf then return end
+	print("[Client][SimulationBall] PlaceLocalBall reason=" .. tostring(reason))
+	pcall(function() ball:Stop() end)
+	pcall(function() ball:SetPlaybackTime(0) end)
+	pcall(function() ball.CFrame = cf end)
+end
+
+local function playLocalGoalSuction(ball, goalPart)
+	if not ball or not goalPart then return end
+
+	local ok, ballCFrame = pcall(function()
+		return ball.BallCFrame
+	end)
+	if not ok or not ballCFrame then return end
+
+	local startPos = ballCFrame.Position
+	local goalPos = goalPart.Position
+	local yDiff = startPos.Y - goalPos.Y
+	if yDiff <= GolfConfig.SUCTION_Y_THRESHOLD then
+		pcall(function() ball:Stop() end)
+		pcall(function() ball:SetPlaybackTime(0) end)
+		return
+	end
+
+	local STEPS = 30
+	local INTERVAL = 1 / 30
+	for i = 1, STEPS do
+		if playerBall ~= ball then break end
+		local t = i / STEPS
+		local xzT = math.log(1 + t * 9) / math.log(10)
+		local newX = startPos.X + (goalPos.X - startPos.X) * xzT
+		local newZ = startPos.Z + (goalPos.Z - startPos.Z) * xzT
+		local newY = startPos.Y
+		pcall(function()
+			ball.CFrame = CFrame.new(newX, newY, newZ)
+		end)
+		task.wait(INTERVAL)
+	end
+
+	pcall(function() ball:Stop() end)
+	pcall(function() ball:SetPlaybackTime(0) end)
+end
+
 -- ─────────────────────────────────────────
 -- 스윙
 -- ─────────────────────────────────────────
@@ -307,6 +357,7 @@ local function doSwing()
 	end
 
 	canSwing = false
+	localSwingCount = localSwingCount + 1
 	setPowerBarVisible(false)
 
 	if currentPower <= 10 then
@@ -350,6 +401,12 @@ local function doSwing()
 	task.spawn(function()
 		swingBall.Paused:Wait()
 		if playerBall ~= swingBall then return end
+		local pausedOk, pausedCFrame = pcall(function()
+			return swingBall.BallCFrame
+		end)
+		if pausedOk and pausedCFrame then
+			lastBallCFrame = pausedCFrame
+		end
 		canSwing = true
 		print("[Client][Game] NextStrokeReady reason=localPaused")
 		setPowerBarVisible(true)
@@ -367,6 +424,12 @@ GoalAnimEvent.OnClientEvent:Connect(function(goalPart)
 	camera.CameraType = Enum.CameraType.Scriptable
 	soundGoal:Play()
 	setPowerBarVisible(false)
+
+	local goalBall = playerBall
+	task.spawn(function()
+		task.wait(1.5)
+		playLocalGoalSuction(goalBall, goalPart)
+	end)
 
 	local holeFolder   = goalPart.Parent
 	local finalCam     = holeFolder:FindFirstChild("FinalCam")
@@ -447,7 +510,7 @@ GoalResultEvent.OnClientEvent:Connect(function(resultData)
 	end)
 end)
 
-BallReadyEvent.OnClientEvent:Connect(function(ballName, snapCamera)
+BallReadyEvent.OnClientEvent:Connect(function(ballName, snapCamera, serverHole, spawnCFrame)
 	printClientNetwork("Receive", "BallReady", "snapCamera=" .. tostring(snapCamera))
 	-- 서버에서 Clone한 SimulationBall이 클라이언트에 복제될 때까지 게임 시작 처리를 지연합니다.
 	local ball = workspace:WaitForChild(ballName)
@@ -457,6 +520,12 @@ BallReadyEvent.OnClientEvent:Connect(function(ballName, snapCamera)
 	end
 	playerBallSignalConnections = {}
 	playerBall          = ball
+	currentHole         = serverHole or currentHole or 1
+	placeLocalBallAt(playerBall, spawnCFrame, "BallReady")
+	local holeFolder    = workspace:WaitForChild("Holes"):WaitForChild("Hole" .. tostring(currentHole))
+	currentGoalPart     = holeFolder:WaitForChild("Goal")
+	localSwingCount     = 0
+	goalReportSent      = false
 
 	table.insert(playerBallSignalConnections, playerBall.Played:Connect(function()
 		print("[Client][SimulationBall] Played")
@@ -504,6 +573,7 @@ BallReadyEvent.OnClientEvent:Connect(function(ballName, snapCamera)
 		end)
 		if ballOk and ballCFrame then
 			cameraTarget.Position = ballCFrame.Position
+			lastBallCFrame = ballCFrame
 		else
 			playerBall = nil
 			canSwing = false
@@ -521,6 +591,10 @@ ClearEvent.OnClientEvent:Connect(function(holeNumber)
 	printClientNetwork("Receive", "ClearEvent", "hole=" .. tostring(holeNumber))
 	canSwing     = false
 	playerBall   = nil
+	currentHole = nil
+	currentGoalPart = nil
+	lastBallCFrame = nil
+	goalReportSent = false
 	destroyDirectionIndicator()
 	for _, connection in ipairs(playerBallSignalConnections) do
 		connection:Disconnect()
@@ -642,15 +716,7 @@ local function initDirectionIndicator()
 
 	local refBallPos = Vector3.new(5330.0, 425.697052, 1960.0)
 	local refDirPos = Vector3.new(5621.75293, 377.949835, 1964.27478)
-	local pivotOk, pivot = pcall(function()
-		return activeDirectionIndicator:GetPivot()
-	end)
-	if not pivotOk or not pivot then
-		activeDirectionIndicator = nil
-		directionRelativeCFrame = nil
-		return nil
-	end
-	local originalRot = pivot.Rotation
+	local originalRot = activeDirectionIndicator:GetPivot().Rotation
 	local refDirCFrame = CFrame.new(refDirPos) * originalRot
 	directionRelativeCFrame = CFrame.new(refBallPos):Inverse() * refDirCFrame
 
@@ -661,20 +727,14 @@ setDirectionIndicatorVisible = function(isVisible)
 	if not activeDirectionIndicator then return end
 
 	local transparency = isVisible and 0 or 1
-	local ok = pcall(function()
-		if activeDirectionIndicator:IsA("BasePart") then
-			activeDirectionIndicator.Transparency = transparency
-		else
-			for _, desc in ipairs(activeDirectionIndicator:GetDescendants()) do
-				if desc:IsA("BasePart") then
-					desc.Transparency = transparency
-				end
+	if activeDirectionIndicator:IsA("BasePart") then
+		activeDirectionIndicator.Transparency = transparency
+	else
+		for _, desc in ipairs(activeDirectionIndicator:GetDescendants()) do
+			if desc:IsA("BasePart") then
+				desc.Transparency = transparency
 			end
 		end
-	end)
-	if not ok then
-		activeDirectionIndicator = nil
-		directionRelativeCFrame = nil
 	end
 end
 
@@ -688,12 +748,14 @@ end
 
 RunService.RenderStepped:Connect(function(dt)
 	local ballPos = nil
+	local ballCFrame = nil
 	if playerBall then
-		local ballOk, ballCFrame = pcall(function()
+		local ballOk, cf = pcall(function()
 			return playerBall.BallCFrame
 		end)
-		if ballOk and ballCFrame then
-			ballPos = ballCFrame.Position
+		if ballOk and cf then
+			ballCFrame = cf
+			ballPos = cf.Position
 		else
 			playerBall = nil
 			canSwing = false
@@ -706,7 +768,6 @@ RunService.RenderStepped:Connect(function(dt)
 		aimDir = lookFlat.Unit
 	end
 
-	-- [기존 카메라 추적 로직]
 	if isGoalAnim and goalCamTargetCFrame then
 		camera.CFrame = camera.CFrame:Lerp(goalCamTargetCFrame, math.clamp(dt * 3, 0, 1))
 	elseif ballPos then
@@ -715,23 +776,60 @@ RunService.RenderStepped:Connect(function(dt)
 
 	updateGoldPoles(ballPos)
 
-	-- [새로 추가된 방향 지시기(Direction) 궤도 회전 로직]
+	if ballPos and currentGoalPart and not goalReportSent then
+		local goalRadius = math.min(currentGoalPart.Size.X, currentGoalPart.Size.Z) / 2 * 0.6
+		local rel = currentGoalPart.CFrame:PointToObjectSpace(ballPos)
+		local dist2D = math.sqrt(rel.X^2 + rel.Z^2)
+		local isGoal = dist2D <= goalRadius and ballPos.Y < currentGoalPart.Position.Y + 2 and ballPos.Y > currentGoalPart.Position.Y - 50
+
+		if currentHole == 18 then
+			local halfX = currentGoalPart.Size.X / 2
+			local halfZ = currentGoalPart.Size.Z / 2
+			isGoal = math.abs(rel.X) <= halfX and math.abs(rel.Z) <= halfZ
+				and ballPos.Y < currentGoalPart.Position.Y + 10
+				and ballPos.Y > currentGoalPart.Position.Y - 50
+		end
+
+		if isGoal then
+			goalReportSent = true
+			canSwing = false
+			setPowerBarVisible(false)
+			printClientNetwork("Send", "GoalReached", "hole=" .. tostring(currentHole) .. " swings=" .. tostring(localSwingCount))
+			GoalReachedEvent:FireServer(ballPos, localSwingCount)
+		end
+	end
+
+	if canSwing and ballPos and lastBallCFrame then
+		local rayResult = workspace:Raycast(ballPos + Vector3.new(0, 5, 0), Vector3.new(0, -20, 0))
+		if rayResult and rayResult.Instance then
+			local parent = rayResult.Instance.Parent
+			local parentName = parent and parent.Name or ""
+			local hitHoleNum = parentName:match("^Hole(%d+)$")
+			if hitHoleNum and tonumber(hitHoleNum) ~= currentHole then
+				print("[Client][Game] ResetBall reason=otherHole currentHole=" .. tostring(currentHole) .. " hitHole=" .. tostring(hitHoleNum))
+				playerBall:Stop()
+				playerBall.CFrame = lastBallCFrame
+				playerBall:SetPlaybackTime(0)
+				return
+			end
+		end
+
+		if ballPos.Y < -150 then
+			print("[Client][Game] ResetBall reason=fall y=" .. tostring(ballPos.Y))
+			playerBall:Stop()
+			playerBall.CFrame = lastBallCFrame
+			playerBall:SetPlaybackTime(0)
+			return
+		end
+	end
+
 	if canSwing and ballPos then
 		initDirectionIndicator()
 
-		-- 2. 회전 및 위치 실시간 업데이트 (Pivot 중심 회전)
 		if activeDirectionIndicator and directionRelativeCFrame then
 			setDirectionIndicatorVisible(true)
-			-- 제시해주신 오프셋 위치가 대략 +X축(5621 > 5330)이므로, 카메라 방향을 X축 기준 각도로 변환합니다.
 			local angle = math.atan2(-aimDir.Z, aimDir.X)
-			
-			-- 로블록스는 상하 축이 'Y축'이므로 좌우 조준을 하려면 Y축 회전이 필요합니다.
 			local rotationCFrame = CFrame.Angles(0, angle, 0)
-			
-			-- (만약 파트 자체의 로컬축이 뒤틀려 있어 정말 수직축 기준의 Roll 형태인 Z축 회전이 필요하다면 위 코드를 지우고 아래를 켜세요)
-			-- local rotationCFrame = CFrame.Angles(0, 0, angle)
-
-			-- 새로운 위치/회전 = 현재 공 위치 * 회전 * 초기 상대 오프셋
 			local targetCFrame = CFrame.new(ballPos) * rotationCFrame * directionRelativeCFrame
 			local pivotOk = pcall(function()
 				activeDirectionIndicator:PivotTo(targetCFrame)
@@ -743,14 +841,9 @@ RunService.RenderStepped:Connect(function(dt)
 			end
 
 			local powerRatio = math.clamp(currentPower / 100, 0, 1)
-
-			-- 1. 시작 RGB: (254, 223, 0)
-			-- 2. 끝 RGB:   (254, 0, 0)
-			-- 비율(powerRatio)에 따라 각 R, G, B 값을 직접 계산 (수동 Lerp)
 			local r = 254 + (254 - 254) * powerRatio
 			local g = 223 + (0 - 223) * powerRatio
 			local b = 0 + (0 - 0) * powerRatio
-			
 			local currentColor = Color3.fromRGB(math.round(r), math.round(g), math.round(b))
 			
 			local colorOk = pcall(function()

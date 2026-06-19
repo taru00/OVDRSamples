@@ -25,6 +25,7 @@ GolfConfig.EVENT_NAMES = {
 	GoalResult = "GoalResult",
 	ScoreboardUpdate = "ScoreboardUpdate",
 	StartGame = "StartGame",
+	GoalReached = "GoalReached",
 }
 
 return GolfConfig
