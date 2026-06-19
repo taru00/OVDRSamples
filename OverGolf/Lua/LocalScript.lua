@@ -371,14 +371,17 @@ local function doSwing()
 	local shotDir = aimDir
 	local shotOrigin = ballCFrame.Position + Vector3.new(0, 3, 0)
 	local startCF = CFrame.lookAt(shotOrigin, shotOrigin + shotDir * 10, Vector3.yAxis)
+	local ratio = math.clamp(currentPower / 100, 0, 1)
+	local initialSpeed = GolfConfig.SWING_POWER_MULTIPLIER * ratio
 	local swingDetail = string.format(
-		"power=%.2f dir=(%.3f, %.3f, %.3f) pos=(%.3f, %.3f, %.3f)",
+		"power=%.2f speed=%.3f dir=(%.3f, %.3f, %.3f) pos=(%.3f, %.3f, %.3f)",
 		currentPower,
+		initialSpeed,
 		shotDir.X, shotDir.Y, shotDir.Z,
 		shotOrigin.X, shotOrigin.Y, shotOrigin.Z
 	)
 
-	print("[Client][SimulationBall] LocalSwing | " .. swingDetail)
+	print("[Client][Swing] LocalSwing | " .. swingDetail)
 	playerBall:Stop()	
 	playerBall.CFrame = startCF
 	playerBall.EnablePathMarker = true
@@ -399,12 +402,12 @@ local function doSwing()
 		local elapsed = 0.0
 		local slept = false
 
-		print("[Client][Game] IsSleepingPollStart hole=" .. tostring(currentHole) .. " swings=" .. tostring(localSwingCount))
+		print("[Client][Swing] IsSleepingPollStart hole=" .. tostring(currentHole) .. " swings=" .. tostring(localSwingCount))
 
 		while elapsed < TIMEOUT_SECONDS do
 			-- Early-Out: 현재 스윙 중인 공이 바뀌면 이전 폴링은 더 이상 유효하지 않습니다.
 			if playerBall ~= swingBall then
-				print("[Client][Game] IsSleepingPollEnd reason=ballChanged elapsed=" .. string.format("%.1f", elapsed))
+				print("[Client][Swing] IsSleepingPollEnd reason=ballChanged elapsed=" .. string.format("%.1f", elapsed))
 				return
 			end
 
@@ -413,7 +416,7 @@ local function doSwing()
 				return swingBall.BallCFrame
 			end)
 			if not ballOk or not ballCFrame then
-				print("[Client][Game] IsSleepingPollEnd reason=ballCFrameUnavailable elapsed=" .. string.format("%.1f", elapsed))
+				print("[Client][Swing] IsSleepingPollEnd reason=ballCFrameUnavailable elapsed=" .. string.format("%.1f", elapsed))
 				return
 			end
 
@@ -427,7 +430,7 @@ local function doSwing()
 					local parentName = parent and parent.Name or ""
 					local hitHoleNum = parentName:match("^Hole(%d+)$")
 					if hitHoleNum and tonumber(hitHoleNum) ~= currentHole then
-						print("[Client][Game] ResetBall reason=otherHole currentHole=" .. tostring(currentHole) .. " hitHole=" .. tostring(hitHoleNum))
+						print("[Client][Swing] ResetBall reason=otherHole currentHole=" .. tostring(currentHole) .. " hitHole=" .. tostring(hitHoleNum))
 						swingBall:Stop()
 						swingBall.CFrame = lastBallCFrame						
 						canSwing = true
@@ -439,7 +442,7 @@ local function doSwing()
 
 			-- 낙하 판정: 프레임마다 볼 필요 없이 스윙 폴링 주기마다 하한선 이탈 여부만 확인합니다.
 			if lastBallCFrame and ballPos.Y < -150 then
-				print("[Client][Game] ResetBall reason=fall y=" .. tostring(ballPos.Y))
+				print("[Client][Swing] ResetBall reason=fall y=" .. tostring(ballPos.Y))
 				swingBall:Stop()
 				swingBall.CFrame = lastBallCFrame				
 				canSwing = true
@@ -471,7 +474,7 @@ local function doSwing()
 					goalReportSent = true
 					canSwing = false
 					setPowerBarVisible(false)
-					print("[Client][Network] Send GoalReached | hole=" .. tostring(currentHole) .. " swings=" .. tostring(localSwingCount))
+					print("[Client][Swing][Network] Send GoalReached | hole=" .. tostring(currentHole) .. " swings=" .. tostring(localSwingCount))
 					GoalReachedEvent:FireServer(ballPos, localSwingCount)					
 					return
 				end
@@ -483,7 +486,7 @@ local function doSwing()
 			end)
 			if sleepOk and sleeping then
 				slept = true
-				print("[Client][Game] IsSleepingPollEnd reason=IsSleeping elapsed=" .. string.format("%.1f", elapsed))
+				print("[Client][Swing] IsSleepingPollEnd reason=IsSleeping elapsed=" .. string.format("%.1f", elapsed))
 				break
 			end
 
@@ -494,17 +497,18 @@ local function doSwing()
 
 		-- Early-Out: 폴링 종료 직후 상태가 바뀌었거나 이미 골인이 보고되었으면 다음 타를 열지 않습니다.
 		if playerBall ~= swingBall then
-			print("[Client][Game] IsSleepingPollEnd reason=ballChangedAfterLoop elapsed=" .. string.format("%.1f", elapsed))
+			print("[Client][Swing] IsSleepingPollEnd reason=ballChangedAfterLoop elapsed=" .. string.format("%.1f", elapsed))
 			return
 		end
 		if goalReportSent then
-			print("[Client][Game] IsSleepingPollEnd reason=goalReportedAfterLoop elapsed=" .. string.format("%.1f", elapsed))
+			print("[Client][Swing] IsSleepingPollEnd reason=goalReportedAfterLoop elapsed=" .. string.format("%.1f", elapsed))
 			return
 		end
 
 		if not slept then
+			print("[Client][Swing] IsSleepingPollEnd reason=timeout elapsed=" .. string.format("%.1f", elapsed))
 			print(string.format(
-				"[Client][Game] IsSleeping poll timeout (%.1fs) — proceeding to next stroke",
+				"[Client][Swing] IsSleeping poll timeout (%.1fs) — proceeding to next stroke",
 				TIMEOUT_SECONDS
 			))
 		end
@@ -692,6 +696,17 @@ BallReadyEvent.OnClientEvent:Connect(function(ballName, snapCamera, serverHole, 
 
 	table.insert(playerBallSignalConnections, playerBall.Paused:Connect(function()
 		print("[Client][SimulationBall] Paused")
+		if playerBall and not canSwing and not goalReportSent then
+			local ballOk, ballCFrame = pcall(function()
+				return playerBall.BallCFrame
+			end)
+			if ballOk and ballCFrame then
+				lastBallCFrame = ballCFrame
+			end
+			canSwing = true
+			print("[Client][Game] NextStrokeReady reason=PausedEvent")
+			setPowerBarVisible(true)
+		end
 	end))
 
 	canSwing            = true   -- ✅ 공 확인 후 세팅 (순서는 그대로)
