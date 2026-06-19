@@ -22,7 +22,6 @@ local Remotes = GolfRemotes.GetAllClient()
 local BallReadyEvent        = Remotes.BallReady
 local ClearEvent            = Remotes.ClearEvent
 local GoalAnimEvent         = Remotes.GoalAnim
-local WallHitEvent          = Remotes.WallHitEvent
 local SlotAssignEvent       = Remotes.SlotAssign
 local GoalResultEvent       = Remotes.GoalResult
 local ScoreboardUpdateEvent = Remotes.ScoreboardUpdate
@@ -635,6 +634,8 @@ BallReadyEvent.OnClientEvent:Connect(function(ballName, snapCamera, serverHole, 
 		print("[Client][SimulationBall] Played")
 	end))
 
+	local lastWallHitTime = 0
+	local WALL_HIT_COOLDOWN = 0.2
 	table.insert(playerBallSignalConnections, playerBall.Bounded:Connect(function(otherInstance, bounce)
 		local otherName = otherInstance and otherInstance.Name or "nil"
 		local parentName = (otherInstance and otherInstance.Parent) and otherInstance.Parent.Name or "nil"
@@ -649,6 +650,15 @@ BallReadyEvent.OnClientEvent:Connect(function(ballName, snapCamera, serverHole, 
 			tostring(bounce and bounce.IsBouncedHit),
 			tostring(bounce and bounce.IsSlidingHit)
 		))
+
+		if otherName == "Wall" then
+			local currentTime = os.clock()
+			if currentTime - lastWallHitTime > WALL_HIT_COOLDOWN then
+				lastWallHitTime = currentTime
+				print("[Client][Game] WallHitSound")
+				soundWall:Play()
+			end
+		end
 	end))
 
 	table.insert(playerBallSignalConnections, playerBall.Stopped:Connect(function()
@@ -706,11 +716,6 @@ ClearEvent.OnClientEvent:Connect(function(holeNumber)
 		connection:Disconnect()
 	end
 	playerBallSignalConnections = {}
-end)
-
-WallHitEvent.OnClientEvent:Connect(function()
-	print("[Client][Network] Receive WallHitEvent")
-	soundWall:Play()
 end)
 
 SlotAssignEvent.OnClientEvent:Connect(function(slotData, mySlotNum)

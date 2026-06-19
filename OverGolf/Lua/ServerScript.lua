@@ -22,7 +22,6 @@ local Remotes = GolfRemotes.GetAllServer()
 local BallReadyEvent        = Remotes.BallReady
 local ClearEvent            = Remotes.ClearEvent
 local GoalAnimEvent         = Remotes.GoalAnim
-local WallHitEvent          = Remotes.WallHitEvent
 local SlotAssignEvent       = Remotes.SlotAssign
 local GoalResultEvent       = Remotes.GoalResult
 local ScoreboardUpdateEvent = Remotes.ScoreboardUpdate
@@ -93,25 +92,6 @@ local function broadcastScoreboard()
 		print("[Server][Network] Send ScoreboardUpdate player=" .. p.Name)
 		ScoreboardUpdateEvent:FireClient(p, data)
 	end
-end
-
--- ─────────────────────────────────────────
--- 벽 충돌 사운드
--- ─────────────────────────────────────────
-local function setupBallCollision(ball, player)
-	local lastHitTime = 0
-	local HIT_COOLDOWN = 0.2
-
-	ball.Touched:Connect(function(hit)
-		if hit.Name == "Wall" then
-			local currentTime = os.clock()
-			if currentTime - lastHitTime > HIT_COOLDOWN then
-				lastHitTime = currentTime
-				print("[Server][Network] Send WallHitEvent player=" .. player.Name)
-				WallHitEvent:FireClient(player)
-			end
-		end
-	end)
 end
 
 local function printBallState(player, ball, stateName, reason)
@@ -188,7 +168,6 @@ local function createPlayerBall(player)
 	local ball = ballTemplate:Clone()
 	ball.Name = "GolfBall_" .. tostring(player.UserId)
 	ball.Parent = Workspace
-	setupBallCollision(ball, player)
 	setupBallStateLogging(ball, player)
 	playerBalls[player.UserId] = ball
 	print("[Server][Game] CreatePlayerBall player=" .. player.Name .. " stored=true")
