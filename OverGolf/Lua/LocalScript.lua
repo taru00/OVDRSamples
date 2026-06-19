@@ -145,6 +145,7 @@ local cameraTarget = Instance.new("Part")
 cameraTarget.Name        = "CameraTargetDummy"
 cameraTarget.Transparency = 1
 cameraTarget.CanCollide  = false
+cameraTarget.CanQuery    = false
 cameraTarget.Anchored    = true
 cameraTarget.Size        = Vector3.new(1, 1, 1)
 cameraTarget.Parent      = workspace
@@ -617,6 +618,7 @@ local function initDirectionIndicator()
 	if activeDirectionIndicator:IsA("BasePart") then
 		activeDirectionIndicator.Anchored = true
 		activeDirectionIndicator.CanCollide = false	
+		activeDirectionIndicator.CanQuery = false
 	end
 	setDirectionIndicatorVisible(false)
 
