@@ -223,6 +223,7 @@ local function placeSimulationBallAt(player, data, cf)
 		cf.Position.X, cf.Position.Y, cf.Position.Z
 	))
 	data.isSimulating = false
+	pcall(function() ball:SetPlaybackTime(0) end)
 	pcall(function() ball:Stop() end)	
 	pcall(function() ball.CFrame = cf end)
 

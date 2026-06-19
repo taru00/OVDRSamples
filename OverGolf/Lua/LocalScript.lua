@@ -301,8 +301,7 @@ local function placeLocalBallAt(ball, cf, reason)
 		tostring(reason),
 		pos.X, pos.Y, pos.Z
 	))
-	pcall(function() ball:Stop() end)
-	pcall(function() ball:SetPlaybackTime(0) end)
+	pcall(function() ball:Stop() end)	
 	pcall(function() ball.CFrame = cf end)
 end
 
@@ -318,8 +317,7 @@ local function playLocalGoalSuction(ball, goalPart)
 	local goalPos = goalPart.Position
 	local yDiff = startPos.Y - goalPos.Y
 	if yDiff <= GolfConfig.SUCTION_Y_THRESHOLD then
-		pcall(function() ball:Stop() end)
-		pcall(function() ball:SetPlaybackTime(0) end)
+		pcall(function() ball:Stop() end)		
 		return
 	end
 
@@ -338,8 +336,7 @@ local function playLocalGoalSuction(ball, goalPart)
 		task.wait(INTERVAL)
 	end
 
-	pcall(function() ball:Stop() end)
-	pcall(function() ball:SetPlaybackTime(0) end)
+	pcall(function() ball:Stop() end)	
 end
 
 -- ─────────────────────────────────────────
@@ -383,8 +380,7 @@ local function doSwing()
 	)
 
 	print("[Client][SimulationBall] LocalSwing | " .. swingDetail)
-	playerBall:Stop()
-	playerBall:SetPlaybackTime(0)
+	playerBall:Stop()	
 	playerBall.CFrame = startCF
 	playerBall.EnablePathMarker = true
 
@@ -426,8 +422,7 @@ local function doSwing()
 					if hitHoleNum and tonumber(hitHoleNum) ~= currentHole then
 						print("[Client][Game] ResetBall reason=otherHole currentHole=" .. tostring(currentHole) .. " hitHole=" .. tostring(hitHoleNum))
 						swingBall:Stop()
-						swingBall.CFrame = lastBallCFrame
-						swingBall:SetPlaybackTime(0)
+						swingBall.CFrame = lastBallCFrame						
 						canSwing = true
 						setPowerBarVisible(true)
 						return
@@ -439,8 +434,7 @@ local function doSwing()
 			if lastBallCFrame and ballPos.Y < -150 then
 				print("[Client][Game] ResetBall reason=fall y=" .. tostring(ballPos.Y))
 				swingBall:Stop()
-				swingBall.CFrame = lastBallCFrame
-				swingBall:SetPlaybackTime(0)
+				swingBall.CFrame = lastBallCFrame				
 				canSwing = true
 				setPowerBarVisible(true)
 				return
