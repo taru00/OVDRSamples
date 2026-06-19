@@ -124,7 +124,7 @@ local soundWall     = soundsFolder:WaitForChild("Wall")
 -- State
 -- ─────────────────────────────────────────
 local playerBall          = nil
-local playerBallBoundedConnection = nil
+local BallBoundedConnection = nil
 local canSwing            = false
 local currentPower        = 50
 local aimDir              = Vector3.new(0, 0, -1)
@@ -134,6 +134,7 @@ local goalCamTargetCFrame = nil
 local blockBar          = false  -- Result/Scoreboard 표시 중 bar 억제
 local pendingBarShow    = false  -- blockBar 해제 시 bar 올릴 예약
 local lastScoreboardData = nil  -- 최신 스코어보드 전체 데이터
+local destroyDirectionIndicator = nil
 
 -- 팝업 애니메이션용 원본 사이즈 캐시 (최초 1회 저장)
 local rankOrigSize  = nil
@@ -449,12 +450,12 @@ BallReadyEvent.OnClientEvent:Connect(function(ballName, snapCamera)
 	-- 서버에서 Clone한 SimulationBall이 클라이언트에 복제될 때까지 게임 시작 처리를 지연합니다.
 	local ball = workspace:WaitForChild(ballName)
 
-	if playerBallBoundedConnection then
-		playerBallBoundedConnection:Disconnect()
-		playerBallBoundedConnection = nil
+	if BallBoundedConnection then
+		BallBoundedConnection:Disconnect()
+		BallBoundedConnection = nil
 	end
 	playerBall          = ball
-	playerBallBoundedConnection = playerBall.Bounded:Connect(function(otherInstance, bounce)
+	BallBoundedConnection = playerBall.Bounded:Connect(function(otherInstance, bounce)
 		local otherName = otherInstance and otherInstance.Name or "nil"
 		local parentName = (otherInstance and otherInstance.Parent) and otherInstance.Parent.Name or "nil"
 		local hitPos = bounce and bounce.BouncedPosition
@@ -494,11 +495,11 @@ ClearEvent.OnClientEvent:Connect(function(holeNumber)
 	printClientNetwork("Receive", "ClearEvent", "hole=" .. tostring(holeNumber))
 	canSwing     = false
 	playerBall   = nil
+	destroyDirectionIndicator()
 	if playerBallBoundedConnection then
 		playerBallBoundedConnection:Disconnect()
 		playerBallBoundedConnection = nil
 	end
-	-- Hole cleared; result and scoreboard UI handle player feedback.
 end)
 
 WallHitEvent.OnClientEvent:Connect(function()
@@ -581,6 +582,61 @@ end
 -- ─────────────────────────────────────────
 local activeDirectionIndicator = nil -- 지시기 캐시용 변수
 local directionRelativeCFrame = nil  -- 상대 위치/회전 캐시
+local setDirectionIndicatorVisible = nil
+
+local function initDirectionIndicator()
+	if activeDirectionIndicator then
+		local ok, parent = pcall(function()
+			return activeDirectionIndicator.Parent
+		end)
+		if ok and parent then
+			return activeDirectionIndicator
+		end
+	end
+
+	activeDirectionIndicator = workspace:FindFirstChild("Direction")
+	if not activeDirectionIndicator then
+		print("[Client][Direction] Warning: workspace.Direction not found")
+		return nil
+	end
+
+	if activeDirectionIndicator:IsA("BasePart") then
+		activeDirectionIndicator.Anchored = true
+		activeDirectionIndicator.CanCollide = false	
+	end
+	setDirectionIndicatorVisible(false)
+
+	local refBallPos = Vector3.new(5330.0, 425.697052, 1960.0)
+	local refDirPos = Vector3.new(5621.75293, 377.949835, 1964.27478)
+	local originalRot = activeDirectionIndicator:GetPivot().Rotation
+	local refDirCFrame = CFrame.new(refDirPos) * originalRot
+	directionRelativeCFrame = CFrame.new(refBallPos):Inverse() * refDirCFrame
+
+	return activeDirectionIndicator
+end
+
+setDirectionIndicatorVisible = function(isVisible)
+	if not activeDirectionIndicator then return end
+
+	local transparency = isVisible and 0 or 1
+	if activeDirectionIndicator:IsA("BasePart") then
+		activeDirectionIndicator.Transparency = transparency
+	else
+		for _, desc in ipairs(activeDirectionIndicator:GetDescendants()) do
+			if desc:IsA("BasePart") then
+				desc.Transparency = transparency
+			end
+		end
+	end
+end
+
+destroyDirectionIndicator = function()
+	if activeDirectionIndicator then
+		setDirectionIndicatorVisible(false)
+		activeDirectionIndicator = nil
+	end
+	directionRelativeCFrame = nil
+end
 
 RunService.RenderStepped:Connect(function(dt)
 	if playerBall and not playerBall.Parent then
@@ -612,34 +668,11 @@ RunService.RenderStepped:Connect(function(dt)
 	if canSwing and playerBall then
 		local ballPos = playerBall.BallCFrame.Position
 		if ballPos then
-			-- 1. 파트 복제 및 초기 오프셋(Relative CFrame) 수학적 설정
-			if not activeDirectionIndicator then
-				local template = ReplicatedStorage:FindFirstChild("Direction")
-				if template then
-					local directionIndicator = template:Clone()
-					activeDirectionIndicator = directionIndicator
-					activeDirectionIndicator.Anchored = true
-					activeDirectionIndicator.CanCollide = false
-					activeDirectionIndicator.Parent = workspace
-
-					-- 유저님이 직접 제공해주신 절대 좌표
-					local refBallPos = Vector3.new(5330.0, 425.697052, 1960.0)
-					local refDirPos = Vector3.new(5621.75293, 377.949835, 1964.27478)
-					
-					-- Template의 고유 회전값은 보존하면서, 위치만 refDirPos로 강제 지정한 CFrame
-					local originalRot = template:GetPivot().Rotation
-					local refDirCFrame = CFrame.new(refDirPos) * originalRot
-					
-					-- ★ 핵심: Ball을 중심으로 Direction이 얼만큼 떨어져있는지(오프셋)를 캐싱합니다.
-					-- 이렇게 하면 모델의 실제 Pivot 세팅과 무관하게 공을 축으로 완벽하게 공전합니다.
-					directionRelativeCFrame = CFrame.new(refBallPos):Inverse() * refDirCFrame
-				else
-					print("Error: [Golf] ReplicatedStorage에 'Direction' 파트가 없습니다.")
-				end
-			end
+			initDirectionIndicator()
 
 			-- 2. 회전 및 위치 실시간 업데이트 (Pivot 중심 회전)
 			if activeDirectionIndicator and directionRelativeCFrame then
+				setDirectionIndicatorVisible(true)
 				-- 제시해주신 오프셋 위치가 대략 +X축(5621 > 5330)이므로, 카메라 방향을 X축 기준 각도로 변환합니다.
 				local angle = math.atan2(-aimDir.Z, aimDir.X)
 				
@@ -675,5 +708,7 @@ RunService.RenderStepped:Connect(function(dt)
 					end
 			end
 		end
+	elseif activeDirectionIndicator then
+		setDirectionIndicatorVisible(false)
 	end
 end)
