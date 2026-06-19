@@ -124,7 +124,7 @@ local soundWall     = soundsFolder:WaitForChild("Wall")
 -- State
 -- ─────────────────────────────────────────
 local playerBall          = nil
-local BallBoundedConnection = nil
+local playerBallSignalConnections = {}
 local canSwing            = false
 local currentPower        = 50
 local aimDir              = Vector3.new(0, 0, -1)
@@ -446,16 +446,21 @@ GoalResultEvent.OnClientEvent:Connect(function(resultData)
 end)
 
 BallReadyEvent.OnClientEvent:Connect(function(ballName, snapCamera)
-	printClientNetwork("Receive", "BallReady", "ballName=" .. tostring(ballName) .. " snapCamera=" .. tostring(snapCamera))
+	printClientNetwork("Receive", "BallReady", "snapCamera=" .. tostring(snapCamera))
 	-- 서버에서 Clone한 SimulationBall이 클라이언트에 복제될 때까지 게임 시작 처리를 지연합니다.
 	local ball = workspace:WaitForChild(ballName)
 
-	if BallBoundedConnection then
-		BallBoundedConnection:Disconnect()
-		BallBoundedConnection = nil
+	for _, connection in ipairs(playerBallSignalConnections) do
+		connection:Disconnect()
 	end
+	playerBallSignalConnections = {}
 	playerBall          = ball
-	BallBoundedConnection = playerBall.Bounded:Connect(function(otherInstance, bounce)
+
+	table.insert(playerBallSignalConnections, playerBall.Played:Connect(function()
+		print("[Client][SimulationBall] Played")
+	end))
+
+	table.insert(playerBallSignalConnections, playerBall.Bounded:Connect(function(otherInstance, bounce)
 		local otherName = otherInstance and otherInstance.Name or "nil"
 		local parentName = (otherInstance and otherInstance.Parent) and otherInstance.Parent.Name or "nil"
 		local hitPos = bounce and bounce.BouncedPosition
@@ -469,7 +474,16 @@ BallReadyEvent.OnClientEvent:Connect(function(ballName, snapCamera)
 			tostring(bounce and bounce.IsBouncedHit),
 			tostring(bounce and bounce.IsSlidingHit)
 		))
-	end)
+	end))
+
+	table.insert(playerBallSignalConnections, playerBall.Stopped:Connect(function()
+		print("[Client][SimulationBall] Stopped")
+	end))
+
+	table.insert(playerBallSignalConnections, playerBall.Paused:Connect(function()
+		print("[Client][SimulationBall] Paused")
+	end))
+
 	canSwing            = true   -- ✅ 공 확인 후 세팅 (순서는 그대로)
 	isGoalAnim          = false
 	goalCamTargetCFrame = nil
@@ -496,10 +510,10 @@ ClearEvent.OnClientEvent:Connect(function(holeNumber)
 	canSwing     = false
 	playerBall   = nil
 	destroyDirectionIndicator()
-	if playerBallBoundedConnection then
-		playerBallBoundedConnection:Disconnect()
-		playerBallBoundedConnection = nil
+	for _, connection in ipairs(playerBallSignalConnections) do
+		connection:Disconnect()
 	end
+	playerBallSignalConnections = {}
 end)
 
 WallHitEvent.OnClientEvent:Connect(function()

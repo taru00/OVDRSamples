@@ -121,15 +121,31 @@ end
 
 local function printBallState(player, ball, stateName, reason)
 	local playerName = player and player.Name or "UnknownPlayer"
-	local ballName = ball and ball.Name or "UnknownBall"
 	local reasonText = reason and (" | " .. reason) or ""
-	print(string.format("[Golf][SimulationBall] player=%s ball=%s state=%s%s", playerName, ballName, stateName, reasonText))
+	print(string.format("[Server][SimulationBall] player=%s state=%s%s", playerName, stateName, reasonText))
 end
 
 local function setupBallStateLogging(ball, player)
 	-- SimulationBall 내부 재생 이벤트가 발생할 때마다 실제 상태 변화를 출력합니다.
 	ball.Played:Connect(function()
 		printBallState(player, ball, "Played", "SimulationBall event")
+	end)
+
+	ball.Bounded:Connect(function(otherInstance, bounce)
+		local otherName = otherInstance and otherInstance.Name or "nil"
+		local parentName = (otherInstance and otherInstance.Parent) and otherInstance.Parent.Name or "nil"
+		local hitPos = bounce and bounce.BouncedPosition
+		local normal = bounce and bounce.ImpactNormal
+		print(string.format(
+			"[Server][SimulationBall] player=%s state=Bounded other=%s parent=%s pos=(%.3f, %.3f, %.3f) normal=(%.3f, %.3f, %.3f) bounced=%s sliding=%s",
+			player.Name,
+			tostring(otherName),
+			tostring(parentName),
+			hitPos and hitPos.X or 0, hitPos and hitPos.Y or 0, hitPos and hitPos.Z or 0,
+			normal and normal.X or 0, normal and normal.Y or 0, normal and normal.Z or 0,
+			tostring(bounce and bounce.IsBouncedHit),
+			tostring(bounce and bounce.IsSlidingHit)
+		))
 	end)
 
 	ball.Paused:Connect(function()
