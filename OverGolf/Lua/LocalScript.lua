@@ -399,16 +399,41 @@ local function doSwing()
 
 	local swingBall = playerBall
 	task.spawn(function()
-		swingBall.Paused:Wait()
+		local POLL_INTERVAL = 0.1
+		local TIMEOUT_SECONDS = 10.0
+		local elapsed = 0.0
+		local slept = false
+
+		while elapsed < TIMEOUT_SECONDS do
+			if playerBall ~= swingBall then return end
+			local sleepOk, sleeping = pcall(function()
+				return swingBall:IsSleeping()
+			end)
+			if sleepOk and sleeping then
+				slept = true
+				break
+			end
+			task.wait(POLL_INTERVAL)
+			elapsed = elapsed + POLL_INTERVAL
+		end
+
 		if playerBall ~= swingBall then return end
-		local pausedOk, pausedCFrame = pcall(function()
+
+		if not slept then
+			print(string.format(
+				"[Client][Game] IsSleeping poll timeout (%.1fs) — proceeding to next stroke",
+				TIMEOUT_SECONDS
+			))
+		end
+
+		local ballOk, ballCFrame = pcall(function()
 			return swingBall.BallCFrame
 		end)
-		if pausedOk and pausedCFrame then
-			lastBallCFrame = pausedCFrame
+		if ballOk and ballCFrame then
+			lastBallCFrame = ballCFrame
 		end
 		canSwing = true
-		print("[Client][Game] NextStrokeReady reason=localPaused")
+		print("[Client][Game] NextStrokeReady reason=" .. (slept and "IsSleeping" or "timeout"))
 		setPowerBarVisible(true)
 	end)
 end
