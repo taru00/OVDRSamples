@@ -631,6 +631,7 @@ BallReadyEvent.OnClientEvent:Connect(function(ballName, snapCamera, serverHole, 
 	playerBall          = ball
 	currentHole         = serverHole or currentHole or 1
 	placeLocalBallAt(playerBall, spawnCFrame, "BallReady")
+	lastBallCFrame      = spawnCFrame
 	local holeFolder    = workspace:WaitForChild("Holes"):WaitForChild("Hole" .. tostring(currentHole))
 	currentGoalPart     = holeFolder:WaitForChild("Goal")
 	localSwingCount     = 0
@@ -683,12 +684,8 @@ BallReadyEvent.OnClientEvent:Connect(function(ballName, snapCamera, serverHole, 
 	end
 
 	if snapCamera then
-		local ballOk, ballCFrame = pcall(function()
-			return playerBall.BallCFrame
-		end)
-		if ballOk and ballCFrame then
-			cameraTarget.Position = ballCFrame.Position
-			lastBallCFrame = ballCFrame
+		if spawnCFrame then
+			cameraTarget.Position = spawnCFrame.Position
 		else
 			playerBall = nil
 			canSwing = false
