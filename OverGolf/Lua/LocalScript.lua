@@ -399,15 +399,23 @@ local function doSwing()
 		local elapsed = 0.0
 		local slept = false
 
+		print("[Client][Game] IsSleepingPollStart hole=" .. tostring(currentHole) .. " swings=" .. tostring(localSwingCount))
+
 		while elapsed < TIMEOUT_SECONDS do
 			-- Early-Out: 현재 스윙 중인 공이 바뀌면 이전 폴링은 더 이상 유효하지 않습니다.
-			if playerBall ~= swingBall then return end
+			if playerBall ~= swingBall then
+				print("[Client][Game] IsSleepingPollEnd reason=ballChanged elapsed=" .. string.format("%.1f", elapsed))
+				return
+			end
 
 			-- Early-Out: 공 위치를 읽지 못하면 골인/정지 판정을 신뢰할 수 없으므로 폴링을 중단합니다.
 			local ballOk, ballCFrame = pcall(function()
 				return swingBall.BallCFrame
 			end)
-			if not ballOk or not ballCFrame then return end
+			if not ballOk or not ballCFrame then
+				print("[Client][Game] IsSleepingPollEnd reason=ballCFrameUnavailable elapsed=" .. string.format("%.1f", elapsed))
+				return
+			end
 
 			local ballPos = ballCFrame.Position
 
@@ -464,7 +472,7 @@ local function doSwing()
 					canSwing = false
 					setPowerBarVisible(false)
 					print("[Client][Network] Send GoalReached | hole=" .. tostring(currentHole) .. " swings=" .. tostring(localSwingCount))
-					GoalReachedEvent:FireServer(ballPos, localSwingCount)
+					GoalReachedEvent:FireServer(ballPos, localSwingCount)					
 					return
 				end
 			end
@@ -475,6 +483,7 @@ local function doSwing()
 			end)
 			if sleepOk and sleeping then
 				slept = true
+				print("[Client][Game] IsSleepingPollEnd reason=IsSleeping elapsed=" .. string.format("%.1f", elapsed))
 				break
 			end
 
@@ -484,8 +493,14 @@ local function doSwing()
 		end
 
 		-- Early-Out: 폴링 종료 직후 상태가 바뀌었거나 이미 골인이 보고되었으면 다음 타를 열지 않습니다.
-		if playerBall ~= swingBall then return end
-		if goalReportSent then return end
+		if playerBall ~= swingBall then
+			print("[Client][Game] IsSleepingPollEnd reason=ballChangedAfterLoop elapsed=" .. string.format("%.1f", elapsed))
+			return
+		end
+		if goalReportSent then
+			print("[Client][Game] IsSleepingPollEnd reason=goalReportedAfterLoop elapsed=" .. string.format("%.1f", elapsed))
+			return
+		end
 
 		if not slept then
 			print(string.format(
