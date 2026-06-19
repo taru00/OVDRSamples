@@ -416,6 +416,36 @@ local function doSwing()
 
 			local ballPos = ballCFrame.Position
 
+			-- 지정 홀 이탈 판정: 현재 스윙 중 다른 홀 위로 넘어가면 기준 위치로 되돌리고 다음 타를 허용합니다.
+			if lastBallCFrame then
+				local rayResult = workspace:Raycast(ballPos + Vector3.new(0, 5, 0), Vector3.new(0, -20, 0))
+				if rayResult and rayResult.Instance then
+					local parent = rayResult.Instance.Parent
+					local parentName = parent and parent.Name or ""
+					local hitHoleNum = parentName:match("^Hole(%d+)$")
+					if hitHoleNum and tonumber(hitHoleNum) ~= currentHole then
+						print("[Client][Game] ResetBall reason=otherHole currentHole=" .. tostring(currentHole) .. " hitHole=" .. tostring(hitHoleNum))
+						swingBall:Stop()
+						swingBall.CFrame = lastBallCFrame
+						swingBall:SetPlaybackTime(0)
+						canSwing = true
+						setPowerBarVisible(true)
+						return
+					end
+				end
+			end
+
+			-- 낙하 판정: 프레임마다 볼 필요 없이 스윙 폴링 주기마다 하한선 이탈 여부만 확인합니다.
+			if lastBallCFrame and ballPos.Y < -150 then
+				print("[Client][Game] ResetBall reason=fall y=" .. tostring(ballPos.Y))
+				swingBall:Stop()
+				swingBall.CFrame = lastBallCFrame
+				swingBall:SetPlaybackTime(0)
+				canSwing = true
+				setPowerBarVisible(true)
+				return
+			end
+
 			-- 골인 판정: 일반 홀은 골 파트 중심 기준의 2D 반경과 높이 범위로 확인합니다.
 			if currentGoalPart and not goalReportSent then
 				local goalRadius = math.min(currentGoalPart.Size.X, currentGoalPart.Size.Z) / 2 * 0.6
@@ -861,30 +891,7 @@ RunService.RenderStepped:Connect(function(dt)
 
 	updateGoldPoles(ballPos)
 
-	if canSwing and ballPos and lastBallCFrame then
-		local rayResult = workspace:Raycast(ballPos + Vector3.new(0, 5, 0), Vector3.new(0, -20, 0))
-		if rayResult and rayResult.Instance then
-			local parent = rayResult.Instance.Parent
-			local parentName = parent and parent.Name or ""
-			local hitHoleNum = parentName:match("^Hole(%d+)$")
-			if hitHoleNum and tonumber(hitHoleNum) ~= currentHole then
-				print("[Client][Game] ResetBall reason=otherHole currentHole=" .. tostring(currentHole) .. " hitHole=" .. tostring(hitHoleNum))
-				playerBall:Stop()
-				playerBall.CFrame = lastBallCFrame
-				playerBall:SetPlaybackTime(0)
-				return
-			end
-		end
-
-		if ballPos.Y < -150 then
-			print("[Client][Game] ResetBall reason=fall y=" .. tostring(ballPos.Y))
-			playerBall:Stop()
-			playerBall.CFrame = lastBallCFrame
-			playerBall:SetPlaybackTime(0)
-			return
-		end
-	end
-
+	-- 방향 인디케이터는 조준 방향과 파워 변화에 즉시 반응해야 하므로 프레임 갱신으로 유지합니다.
 	if canSwing and ballPos then
 		initDirectionIndicator()
 
