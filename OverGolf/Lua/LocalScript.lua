@@ -126,6 +126,7 @@ local soundWall     = soundsFolder:WaitForChild("Wall")
 local playerBall          = nil
 local canSwing            = false
 local currentPower        = 50
+local aimDir              = Vector3.new(0, 0, -1)
 local isGoalAnim          = false
 local goalCamTargetCFrame = nil
 
@@ -317,10 +318,7 @@ local function doSwing()
 		soundPower100:Play()
 	end
 
-	local look = camera.CFrame.LookVector
-	local dir  = Vector3.new(look.X, 0, look.Z)
-	if dir.Magnitude < 0.001 then dir = Vector3.new(0, 0, -1) end
-	local shotDir = dir.Unit
+	local shotDir = aimDir
 	local shotOrigin = ballCFrame.Position + Vector3.new(0, 3, 0)
 	local startCF = CFrame.lookAt(shotOrigin, shotOrigin + shotDir * 10, Vector3.yAxis)
 	local swingDetail = string.format(
@@ -566,6 +564,12 @@ RunService.RenderStepped:Connect(function(dt)
 		canSwing = false
 	end
 
+	local look = camera.CFrame.LookVector
+	local lookFlat = Vector3.new(look.X, 0, look.Z)
+	if lookFlat.Magnitude >= 0.001 then
+		aimDir = lookFlat.Unit
+	end
+
 	-- [기존 카메라 추적 로직]
 	if isGoalAnim and goalCamTargetCFrame then
 		camera.CFrame = camera.CFrame:Lerp(goalCamTargetCFrame, math.clamp(dt * 3, 0, 1))
@@ -612,12 +616,8 @@ RunService.RenderStepped:Connect(function(dt)
 
 			-- 2. 회전 및 위치 실시간 업데이트 (Pivot 중심 회전)
 			if activeDirectionIndicator and directionRelativeCFrame then
-				local look = camera.CFrame.LookVector
-				local lookFlat = Vector3.new(look.X, 0, look.Z)
-				if lookFlat.Magnitude < 0.001 then lookFlat = Vector3.new(0, 0, -1) end
-				
 				-- 제시해주신 오프셋 위치가 대략 +X축(5621 > 5330)이므로, 카메라 방향을 X축 기준 각도로 변환합니다.
-				local angle = math.atan2(-lookFlat.Z, lookFlat.X)
+				local angle = math.atan2(-aimDir.Z, aimDir.X)
 				
 				-- 로블록스는 상하 축이 'Y축'이므로 좌우 조준을 하려면 Y축 회전이 필요합니다.
 				local rotationCFrame = CFrame.Angles(0, angle, 0)
