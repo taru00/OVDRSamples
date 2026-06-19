@@ -29,12 +29,6 @@ local ScoreboardUpdateEvent = Remotes.ScoreboardUpdate
 local StartGameEvent        = Remotes.StartGame
 local GoalReachedEvent      = Remotes.GoalReached
 
-local function printServerNetwork(direction, eventName, player, detail)
-	local playerName = player and player.Name or "AllPlayers"
-	local detailText = detail and (" | " .. detail) or ""
-	print("[Server][Network] " .. direction .. " " .. eventName .. " player=" .. playerName .. detailText)
-end
-
 -- ─────────────────────────────────────────
 -- 슬롯 관리 (최대 6명)
 -- ─────────────────────────────────────────
@@ -68,7 +62,7 @@ local function broadcastSlots()
 		slotData[slot] = p and p.Name or "?"
 	end
 	for _, p in ipairs(Players:GetPlayers()) do
-		printServerNetwork("Send", "SlotAssign", p, "slot=" .. tostring(userSlots[p.UserId] or 0))
+		print("[Server][Network] Send SlotAssign player=" .. p.Name .. " | slot=" .. tostring(userSlots[p.UserId] or 0))
 		SlotAssignEvent:FireClient(p, slotData, userSlots[p.UserId] or 0)
 	end
 end
@@ -96,7 +90,7 @@ local function broadcastScoreboard()
 		end
 	end
 	for _, p in ipairs(Players:GetPlayers()) do
-		printServerNetwork("Send", "ScoreboardUpdate", p)
+		print("[Server][Network] Send ScoreboardUpdate player=" .. p.Name)
 		ScoreboardUpdateEvent:FireClient(p, data)
 	end
 end
@@ -113,7 +107,7 @@ local function setupBallCollision(ball, player)
 			local currentTime = os.clock()
 			if currentTime - lastHitTime > HIT_COOLDOWN then
 				lastHitTime = currentTime
-				printServerNetwork("Send", "WallHitEvent", player)
+				print("[Server][Network] Send WallHitEvent player=" .. player.Name)
 				WallHitEvent:FireClient(player)
 			end
 		end
@@ -274,7 +268,7 @@ local function triggerGoal(player, data, stoppedPos)
 	))
 
 	-- ─── 결과 전송 (GoalAnim과 동시에) ───
-	printServerNetwork("Send", "GoalResult", player, "hole=" .. tostring(clearedHole) .. " swings=" .. tostring(swings))
+	print("[Server][Network] Send GoalResult player=" .. player.Name .. " | hole=" .. tostring(clearedHole) .. " swings=" .. tostring(swings))
 	GoalResultEvent:FireClient(player, {
 		hole    = clearedHole,
 		swings  = swings,
@@ -283,7 +277,7 @@ local function triggerGoal(player, data, stoppedPos)
 		exp     = exp,
 		point   = point,
 	})
-	printServerNetwork("Send", "GoalAnim", player, "goal=" .. tostring(data.goalPart and data.goalPart.Name))
+	print("[Server][Network] Send GoalAnim player=" .. player.Name .. " | goal=" .. tostring(data.goalPart and data.goalPart.Name))
 	GoalAnimEvent:FireClient(player, data.goalPart)
 
 	task.wait(1.5)
@@ -291,7 +285,7 @@ local function triggerGoal(player, data, stoppedPos)
 	task.wait(2.7)
 
 	playerData[player.UserId] = nil
-	printServerNetwork("Send", "ClearEvent", player, "hole=" .. tostring(clearedHole))
+	print("[Server][Network] Send ClearEvent player=" .. player.Name .. " | hole=" .. tostring(clearedHole))
 	ClearEvent:FireClient(player, clearedHole)
 
 	-- 스코어보드 전체 브로드캐스트
@@ -365,7 +359,7 @@ setupBallForPlayer = function(player, character, targetHole)
 
 	task.wait(GolfConfig.BALL_READY_DELAY)
 	if playerData[player.UserId] == data and ball and ball.Parent then
-		printServerNetwork("Send", "BallReady", player, "snapCamera=true")
+		print("[Server][Network] Send BallReady player=" .. player.Name .. " | snapCamera=true")
 		BallReadyEvent:FireClient(player, ball.Name, true, targetHole, spawnCF)
 	end
 end
@@ -387,7 +381,7 @@ Players.PlayerRemoving:Connect(function(player)
 end)
 
 StartGameEvent.OnServerEvent:Connect(function(player)
-	printServerNetwork("Receive", "StartGame", player)
+	print("[Server][Network] Receive StartGame player=" .. player.Name)
 	local character = player.Character
 	if character then
 		-- 이때 플레이어의 캐릭터를 투명하게 만들고 1번 홀 공을 세팅합니다.
@@ -396,7 +390,7 @@ StartGameEvent.OnServerEvent:Connect(function(player)
 end)
 
 GoalReachedEvent.OnServerEvent:Connect(function(player, stoppedPos, swingCount)
-	printServerNetwork("Receive", "GoalReached", player, "swings=" .. tostring(swingCount))
+	print("[Server][Network] Receive GoalReached player=" .. player.Name .. " | swings=" .. tostring(swingCount))
 	local data = playerData[player.UserId]
 	if not data or data.cleared then return end
 

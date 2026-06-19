@@ -29,11 +29,6 @@ local ScoreboardUpdateEvent = Remotes.ScoreboardUpdate
 local StartGameEvent        = Remotes.StartGame
 local GoalReachedEvent      = Remotes.GoalReached
 
-local function printClientNetwork(direction, eventName, detail)
-	local detailText = detail and (" | " .. detail) or ""
-	print("[Client][Network] " .. direction .. " " .. eventName .. detailText)
-end
-
 local playerGui   = player:WaitForChild("PlayerGui")
 local screenGui   = playerGui:WaitForChild("ScreenGui")
 local bar         = screenGui:WaitForChild("Bar")
@@ -65,7 +60,7 @@ playButton.Activated:Connect(function()
 	tutorial.Visible = false
 	
 	-- 서버에 게임을 시작하라고 신호를 보냅니다.
-	printClientNetwork("Send", "StartGame")
+	print("[Client][Network] Send StartGame")
 	StartGameEvent:FireServer()
 end)
 
@@ -444,7 +439,7 @@ swingButton.Activated:Connect(doSwing)
 -- 이벤트 수신
 -- ─────────────────────────────────────────
 GoalAnimEvent.OnClientEvent:Connect(function(goalPart)
-	printClientNetwork("Receive", "GoalAnim", "goal=" .. tostring(goalPart and goalPart.Name))
+	print("[Client][Network] Receive GoalAnim | goal=" .. tostring(goalPart and goalPart.Name))
 	isGoalAnim = true
 	camera.CameraType = Enum.CameraType.Scriptable
 	soundGoal:Play()
@@ -476,7 +471,7 @@ GoalAnimEvent.OnClientEvent:Connect(function(goalPart)
 end)
 
 GoalResultEvent.OnClientEvent:Connect(function(resultData)
-	printClientNetwork("Receive", "GoalResult", "hole=" .. tostring(resultData.hole) .. " swings=" .. tostring(resultData.swings))
+	print("[Client][Network] Receive GoalResult | hole=" .. tostring(resultData.hole) .. " swings=" .. tostring(resultData.swings))
 	blockBar = true
 
 	-- 원본 사이즈 최초 1회 캐시
@@ -536,7 +531,7 @@ GoalResultEvent.OnClientEvent:Connect(function(resultData)
 end)
 
 BallReadyEvent.OnClientEvent:Connect(function(ballName, snapCamera, serverHole, spawnCFrame)
-	printClientNetwork("Receive", "BallReady", "snapCamera=" .. tostring(snapCamera))
+	print("[Client][Network] Receive BallReady | snapCamera=" .. tostring(snapCamera))
 	-- 서버에서 Clone한 SimulationBall이 클라이언트에 복제될 때까지 게임 시작 처리를 지연합니다.
 	local ball = workspace:WaitForChild(ballName)
 
@@ -613,7 +608,7 @@ BallReadyEvent.OnClientEvent:Connect(function(ballName, snapCamera, serverHole, 
 end)
 
 ClearEvent.OnClientEvent:Connect(function(holeNumber)
-	printClientNetwork("Receive", "ClearEvent", "hole=" .. tostring(holeNumber))
+	print("[Client][Network] Receive ClearEvent | hole=" .. tostring(holeNumber))
 	canSwing     = false
 	playerBall   = nil
 	currentHole = nil
@@ -628,18 +623,18 @@ ClearEvent.OnClientEvent:Connect(function(holeNumber)
 end)
 
 WallHitEvent.OnClientEvent:Connect(function()
-	printClientNetwork("Receive", "WallHitEvent")
+	print("[Client][Network] Receive WallHitEvent")
 	soundWall:Play()
 end)
 
 SlotAssignEvent.OnClientEvent:Connect(function(slotData, mySlotNum)
-	printClientNetwork("Receive", "SlotAssign", "mySlot=" .. tostring(mySlotNum))
+	print("[Client][Network] Receive SlotAssign | mySlot=" .. tostring(mySlotNum))
 	-- Slot data is currently used by the server-side scoreboard order.
 	-- Keep this listener so future UI can react to slot assignment without changing networking.
 end)
 
 ScoreboardUpdateEvent.OnClientEvent:Connect(function(data)
-	printClientNetwork("Receive", "ScoreboardUpdate")
+	print("[Client][Network] Receive ScoreboardUpdate")
 	lastScoreboardData = data
 
 	-- RANK 위젯이 이미 보이고 있으면 즉시 순위 업데이트
@@ -819,7 +814,7 @@ RunService.RenderStepped:Connect(function(dt)
 			goalReportSent = true
 			canSwing = false
 			setPowerBarVisible(false)
-			printClientNetwork("Send", "GoalReached", "hole=" .. tostring(currentHole) .. " swings=" .. tostring(localSwingCount))
+			print("[Client][Network] Send GoalReached | hole=" .. tostring(currentHole) .. " swings=" .. tostring(localSwingCount))
 			GoalReachedEvent:FireServer(ballPos, localSwingCount)
 		end
 	end
