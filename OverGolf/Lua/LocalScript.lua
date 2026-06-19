@@ -351,6 +351,7 @@ local function doSwing()
 		swingBall.Paused:Wait()
 		if playerBall ~= swingBall then return end
 		canSwing = true
+		print("[Client][Game] NextStrokeReady reason=localPaused")
 		setPowerBarVisible(true)
 	end)
 end
@@ -486,6 +487,7 @@ BallReadyEvent.OnClientEvent:Connect(function(ballName, snapCamera)
 	end))
 
 	canSwing            = true   -- ✅ 공 확인 후 세팅 (순서는 그대로)
+	print("[Client][Game] NextStrokeReady reason=BallReady snapCamera=" .. tostring(snapCamera))
 	isGoalAnim          = false
 	goalCamTargetCFrame = nil
 
@@ -497,7 +499,16 @@ BallReadyEvent.OnClientEvent:Connect(function(ballName, snapCamera)
 	end
 
 	if snapCamera then
-		cameraTarget.Position = playerBall.BallCFrame.Position
+		local ballOk, ballCFrame = pcall(function()
+			return playerBall.BallCFrame
+		end)
+		if ballOk and ballCFrame then
+			cameraTarget.Position = ballCFrame.Position
+		else
+			playerBall = nil
+			canSwing = false
+			return
+		end
 	end
 
 	camera.CameraType            = Enum.CameraType.Custom
@@ -615,16 +626,31 @@ local function initDirectionIndicator()
 		return nil
 	end
 
-	if activeDirectionIndicator:IsA("BasePart") then
-		activeDirectionIndicator.Anchored = true
-		activeDirectionIndicator.CanCollide = false	
-		activeDirectionIndicator.CanQuery = false
+	local setupOk = pcall(function()
+		if activeDirectionIndicator:IsA("BasePart") then
+			activeDirectionIndicator.Anchored = true
+			activeDirectionIndicator.CanCollide = false
+			activeDirectionIndicator.CanQuery = false
+		end
+	end)
+	if not setupOk then
+		activeDirectionIndicator = nil
+		directionRelativeCFrame = nil
+		return nil
 	end
 	setDirectionIndicatorVisible(false)
 
 	local refBallPos = Vector3.new(5330.0, 425.697052, 1960.0)
 	local refDirPos = Vector3.new(5621.75293, 377.949835, 1964.27478)
-	local originalRot = activeDirectionIndicator:GetPivot().Rotation
+	local pivotOk, pivot = pcall(function()
+		return activeDirectionIndicator:GetPivot()
+	end)
+	if not pivotOk or not pivot then
+		activeDirectionIndicator = nil
+		directionRelativeCFrame = nil
+		return nil
+	end
+	local originalRot = pivot.Rotation
 	local refDirCFrame = CFrame.new(refDirPos) * originalRot
 	directionRelativeCFrame = CFrame.new(refBallPos):Inverse() * refDirCFrame
 
@@ -635,14 +661,20 @@ setDirectionIndicatorVisible = function(isVisible)
 	if not activeDirectionIndicator then return end
 
 	local transparency = isVisible and 0 or 1
-	if activeDirectionIndicator:IsA("BasePart") then
-		activeDirectionIndicator.Transparency = transparency
-	else
-		for _, desc in ipairs(activeDirectionIndicator:GetDescendants()) do
-			if desc:IsA("BasePart") then
-				desc.Transparency = transparency
+	local ok = pcall(function()
+		if activeDirectionIndicator:IsA("BasePart") then
+			activeDirectionIndicator.Transparency = transparency
+		else
+			for _, desc in ipairs(activeDirectionIndicator:GetDescendants()) do
+				if desc:IsA("BasePart") then
+					desc.Transparency = transparency
+				end
 			end
 		end
+	end)
+	if not ok then
+		activeDirectionIndicator = nil
+		directionRelativeCFrame = nil
 	end
 end
 
@@ -655,9 +687,17 @@ destroyDirectionIndicator = function()
 end
 
 RunService.RenderStepped:Connect(function(dt)
-	if playerBall and not playerBall.Parent then
-		playerBall = nil
-		canSwing = false
+	local ballPos = nil
+	if playerBall then
+		local ballOk, ballCFrame = pcall(function()
+			return playerBall.BallCFrame
+		end)
+		if ballOk and ballCFrame then
+			ballPos = ballCFrame.Position
+		else
+			playerBall = nil
+			canSwing = false
+		end
 	end
 
 	local look = camera.CFrame.LookVector
@@ -669,59 +709,65 @@ RunService.RenderStepped:Connect(function(dt)
 	-- [기존 카메라 추적 로직]
 	if isGoalAnim and goalCamTargetCFrame then
 		camera.CFrame = camera.CFrame:Lerp(goalCamTargetCFrame, math.clamp(dt * 3, 0, 1))
-	elseif playerBall then
-		local ballPos = playerBall.BallCFrame.Position
+	elseif ballPos then
 		cameraTarget.Position = cameraTarget.Position:Lerp(ballPos, math.clamp(dt * 15, 0, 1))
 	end
 
-	if playerBall then
-		updateGoldPoles(playerBall.BallCFrame.Position)
-	else
-		updateGoldPoles(nil)
-	end
+	updateGoldPoles(ballPos)
 
 	-- [새로 추가된 방향 지시기(Direction) 궤도 회전 로직]
-	if canSwing and playerBall then
-		local ballPos = playerBall.BallCFrame.Position
-		if ballPos then
-			initDirectionIndicator()
+	if canSwing and ballPos then
+		initDirectionIndicator()
 
-			-- 2. 회전 및 위치 실시간 업데이트 (Pivot 중심 회전)
-			if activeDirectionIndicator and directionRelativeCFrame then
-				setDirectionIndicatorVisible(true)
-				-- 제시해주신 오프셋 위치가 대략 +X축(5621 > 5330)이므로, 카메라 방향을 X축 기준 각도로 변환합니다.
-				local angle = math.atan2(-aimDir.Z, aimDir.X)
-				
-				-- 로블록스는 상하 축이 'Y축'이므로 좌우 조준을 하려면 Y축 회전이 필요합니다.
-				local rotationCFrame = CFrame.Angles(0, angle, 0)
-				
-				-- (만약 파트 자체의 로컬축이 뒤틀려 있어 정말 수직축 기준의 Roll 형태인 Z축 회전이 필요하다면 위 코드를 지우고 아래를 켜세요)
-				-- local rotationCFrame = CFrame.Angles(0, 0, angle)
+		-- 2. 회전 및 위치 실시간 업데이트 (Pivot 중심 회전)
+		if activeDirectionIndicator and directionRelativeCFrame then
+			setDirectionIndicatorVisible(true)
+			-- 제시해주신 오프셋 위치가 대략 +X축(5621 > 5330)이므로, 카메라 방향을 X축 기준 각도로 변환합니다.
+			local angle = math.atan2(-aimDir.Z, aimDir.X)
+			
+			-- 로블록스는 상하 축이 'Y축'이므로 좌우 조준을 하려면 Y축 회전이 필요합니다.
+			local rotationCFrame = CFrame.Angles(0, angle, 0)
+			
+			-- (만약 파트 자체의 로컬축이 뒤틀려 있어 정말 수직축 기준의 Roll 형태인 Z축 회전이 필요하다면 위 코드를 지우고 아래를 켜세요)
+			-- local rotationCFrame = CFrame.Angles(0, 0, angle)
 
-				-- 새로운 위치/회전 = 현재 공 위치 * 회전 * 초기 상대 오프셋
-				local targetCFrame = CFrame.new(ballPos) * rotationCFrame * directionRelativeCFrame
+			-- 새로운 위치/회전 = 현재 공 위치 * 회전 * 초기 상대 오프셋
+			local targetCFrame = CFrame.new(ballPos) * rotationCFrame * directionRelativeCFrame
+			local pivotOk = pcall(function()
 				activeDirectionIndicator:PivotTo(targetCFrame)
+			end)
+			if not pivotOk then
+				activeDirectionIndicator = nil
+				directionRelativeCFrame = nil
+				return
+			end
 
-				local powerRatio = math.clamp(currentPower / 100, 0, 1)
+			local powerRatio = math.clamp(currentPower / 100, 0, 1)
 
-				-- 1. 시작 RGB: (254, 223, 0)
-				-- 2. 끝 RGB:   (254, 0, 0)
-				-- 비율(powerRatio)에 따라 각 R, G, B 값을 직접 계산 (수동 Lerp)
-				local r = 254 + (254 - 254) * powerRatio
-				local g = 223 + (0 - 223) * powerRatio
-				local b = 0 + (0 - 0) * powerRatio
-				
-				local currentColor = Color3.fromRGB(math.round(r), math.round(g), math.round(b))
-				
-					if activeDirectionIndicator:IsA("BasePart") then
-						activeDirectionIndicator.Color = currentColor
-					else
-						for _, desc in ipairs(activeDirectionIndicator:GetDescendants()) do
-							if desc:IsA("BasePart") then
-								desc.Color = currentColor
-							end
+			-- 1. 시작 RGB: (254, 223, 0)
+			-- 2. 끝 RGB:   (254, 0, 0)
+			-- 비율(powerRatio)에 따라 각 R, G, B 값을 직접 계산 (수동 Lerp)
+			local r = 254 + (254 - 254) * powerRatio
+			local g = 223 + (0 - 223) * powerRatio
+			local b = 0 + (0 - 0) * powerRatio
+			
+			local currentColor = Color3.fromRGB(math.round(r), math.round(g), math.round(b))
+			
+			local colorOk = pcall(function()
+				if activeDirectionIndicator:IsA("BasePart") then
+					activeDirectionIndicator.Color = currentColor
+				else
+					for _, desc in ipairs(activeDirectionIndicator:GetDescendants()) do
+						if desc:IsA("BasePart") then
+							desc.Color = currentColor
 						end
 					end
+				end
+			end)
+			if not colorOk then
+				activeDirectionIndicator = nil
+				directionRelativeCFrame = nil
+				return
 			end
 		end
 	elseif activeDirectionIndicator then
