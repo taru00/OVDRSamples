@@ -400,7 +400,48 @@ local function doSwing()
 		local slept = false
 
 		while elapsed < TIMEOUT_SECONDS do
+			-- Early-Out: 현재 스윙 중인 공이 바뀌면 이전 폴링은 더 이상 유효하지 않습니다.
 			if playerBall ~= swingBall then return end
+
+			-- Early-Out: 공 위치를 읽지 못하면 골인/정지 판정을 신뢰할 수 없으므로 폴링을 중단합니다.
+			local ballOk, ballCFrame = pcall(function()
+				return swingBall.BallCFrame
+			end)
+			if not ballOk or not ballCFrame then return end
+
+			local ballPos = ballCFrame.Position
+
+			-- 골인 판정: 일반 홀은 골 파트 중심 기준의 2D 반경과 높이 범위로 확인합니다.
+			if currentGoalPart and not goalReportSent then
+				local goalRadius = math.min(currentGoalPart.Size.X, currentGoalPart.Size.Z) / 2 * 0.6
+				local rel = currentGoalPart.CFrame:PointToObjectSpace(ballPos)
+				local dist2D = math.sqrt(rel.X^2 + rel.Z^2)
+				local isGoal = dist2D <= goalRadius
+					and ballPos.Y < currentGoalPart.Position.Y + 2
+					and ballPos.Y > currentGoalPart.Position.Y - 50
+
+				-- 18번 홀은 사각 골 영역 전체를 판정 범위로 사용합니다.
+				if currentHole == 18 then
+					local halfX = currentGoalPart.Size.X / 2
+					local halfZ = currentGoalPart.Size.Z / 2
+					isGoal = math.abs(rel.X) <= halfX
+						and math.abs(rel.Z) <= halfZ
+						and ballPos.Y < currentGoalPart.Position.Y + 10
+						and ballPos.Y > currentGoalPart.Position.Y - 50
+				end
+
+				-- 골인 처리: 서버에 결과를 보고하고 다음 타 준비가 켜지지 않도록 즉시 종료합니다.
+				if isGoal then
+					goalReportSent = true
+					canSwing = false
+					setPowerBarVisible(false)
+					print("[Client][Network] Send GoalReached | hole=" .. tostring(currentHole) .. " swings=" .. tostring(localSwingCount))
+					GoalReachedEvent:FireServer(ballPos, localSwingCount)
+					return
+				end
+			end
+
+			-- 루프 종료 판정: 공이 잠들면 샷이 끝난 것으로 보고 다음 타 준비 단계로 넘어갑니다.
 			local sleepOk, sleeping = pcall(function()
 				return swingBall:IsSleeping()
 			end)
@@ -408,11 +449,15 @@ local function doSwing()
 				slept = true
 				break
 			end
+
+			-- 루프 유지 처리: 아직 골인도 정지도 아니면 짧게 대기한 뒤 다시 판정합니다.
 			task.wait(POLL_INTERVAL)
 			elapsed = elapsed + POLL_INTERVAL
 		end
 
+		-- Early-Out: 폴링 종료 직후 상태가 바뀌었거나 이미 골인이 보고되었으면 다음 타를 열지 않습니다.
 		if playerBall ~= swingBall then return end
+		if goalReportSent then return end
 
 		if not slept then
 			print(string.format(
@@ -427,6 +472,8 @@ local function doSwing()
 		if ballOk and ballCFrame then
 			lastBallCFrame = ballCFrame
 		end
+
+		-- 다음 타 준비: 골인이 아닌 경우에만 스윙 입력과 파워바를 다시 활성화합니다.
 		canSwing = true
 		print("[Client][Game] NextStrokeReady reason=" .. (slept and "IsSleeping" or "timeout"))
 		setPowerBarVisible(true)
@@ -795,29 +842,6 @@ RunService.RenderStepped:Connect(function(dt)
 	end
 
 	updateGoldPoles(ballPos)
-
-	if ballPos and currentGoalPart and not goalReportSent then
-		local goalRadius = math.min(currentGoalPart.Size.X, currentGoalPart.Size.Z) / 2 * 0.6
-		local rel = currentGoalPart.CFrame:PointToObjectSpace(ballPos)
-		local dist2D = math.sqrt(rel.X^2 + rel.Z^2)
-		local isGoal = dist2D <= goalRadius and ballPos.Y < currentGoalPart.Position.Y + 2 and ballPos.Y > currentGoalPart.Position.Y - 50
-
-		if currentHole == 18 then
-			local halfX = currentGoalPart.Size.X / 2
-			local halfZ = currentGoalPart.Size.Z / 2
-			isGoal = math.abs(rel.X) <= halfX and math.abs(rel.Z) <= halfZ
-				and ballPos.Y < currentGoalPart.Position.Y + 10
-				and ballPos.Y > currentGoalPart.Position.Y - 50
-		end
-
-		if isGoal then
-			goalReportSent = true
-			canSwing = false
-			setPowerBarVisible(false)
-			print("[Client][Network] Send GoalReached | hole=" .. tostring(currentHole) .. " swings=" .. tostring(localSwingCount))
-			GoalReachedEvent:FireServer(ballPos, localSwingCount)
-		end
-	end
 
 	if canSwing and ballPos and lastBallCFrame then
 		local rayResult = workspace:Raycast(ballPos + Vector3.new(0, 5, 0), Vector3.new(0, -20, 0))
