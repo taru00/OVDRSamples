@@ -165,7 +165,19 @@ local function createPlayerBall(player)
 	end
 
 	local ballTemplate = ServerStorage:WaitForChild("Ball")
+	local templatePausedOk, templatePaused = pcall(function()
+		return ballTemplate.bPausedWhenSleeping
+	end)
+
 	local ball = ballTemplate:Clone()
+	local clonePausedOk, clonePaused = pcall(function()
+		return ball.bPausedWhenSleeping
+	end)
+
+	pcall(function() ball.bPausedWhenSleeping = false end)
+	
+	print("[Server][Game] PausedWhenSleeping template=" .. tostring(templatePausedOk and templatePaused) .. " clone=" .. tostring(clonePausedOk and clonePaused))
+
 	ball.Name = "GolfBall_" .. tostring(player.UserId)
 	ball.Parent = Workspace
 	setupBallStateLogging(ball, player)

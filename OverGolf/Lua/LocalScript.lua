@@ -616,6 +616,16 @@ BallReadyEvent.OnClientEvent:Connect(function(ballName, snapCamera, serverHole, 
 	))
 	-- 서버에서 Clone한 SimulationBall이 클라이언트에 복제될 때까지 게임 시작 처리를 지연합니다.
 	local ball = workspace:WaitForChild(ballName)
+	local foundPausedOk, foundPaused = pcall(function()
+		return ball.bPausedWhenSleeping
+	end)
+	local forcePausedOk = pcall(function()
+		ball.bPausedWhenSleeping = false
+	end)
+	local forcedPausedOk, forcedPaused = pcall(function()
+		return ball.bPausedWhenSleeping
+	end)
+	print("[Client][Game] PausedWhenSleeping found=" .. tostring(foundPausedOk and foundPaused) .. " forced=" .. tostring(forcePausedOk and forcedPausedOk and forcedPaused))
 
 	for _, connection in ipairs(playerBallSignalConnections) do
 		connection:Disconnect()
