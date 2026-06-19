@@ -295,7 +295,12 @@ end
 
 local function placeLocalBallAt(ball, cf, reason)
 	if not ball or not cf then return end
-	print("[Client][SimulationBall] PlaceLocalBall reason=" .. tostring(reason))
+	local pos = cf.Position
+	print(string.format(
+		"[Client][SimulationBall] PlaceLocalBall reason=%s cframePos=(%.3f, %.3f, %.3f)",
+		tostring(reason),
+		pos.X, pos.Y, pos.Z
+	))
 	pcall(function() ball:Stop() end)
 	pcall(function() ball:SetPlaybackTime(0) end)
 	pcall(function() ball.CFrame = cf end)
@@ -578,7 +583,14 @@ GoalResultEvent.OnClientEvent:Connect(function(resultData)
 end)
 
 BallReadyEvent.OnClientEvent:Connect(function(ballName, snapCamera, serverHole, spawnCFrame)
-	print("[Client][Network] Receive BallReady | snapCamera=" .. tostring(snapCamera))
+	local spawnPos = spawnCFrame and spawnCFrame.Position
+	print(string.format(
+		"[Client][Network] Receive BallReady | snapCamera=%s cframePos=(%.3f, %.3f, %.3f)",
+		tostring(snapCamera),
+		spawnPos and spawnPos.X or 0,
+		spawnPos and spawnPos.Y or 0,
+		spawnPos and spawnPos.Z or 0
+	))
 	-- 서버에서 Clone한 SimulationBall이 클라이언트에 복제될 때까지 게임 시작 처리를 지연합니다.
 	local ball = workspace:WaitForChild(ballName)
 
@@ -623,7 +635,13 @@ BallReadyEvent.OnClientEvent:Connect(function(ballName, snapCamera, serverHole, 
 	end))
 
 	canSwing            = true   -- ✅ 공 확인 후 세팅 (순서는 그대로)
-	print("[Client][Game] NextStrokeReady reason=BallReady snapCamera=" .. tostring(snapCamera))
+	print(string.format(
+		"[Client][Game] NextStrokeReady reason=BallReady snapCamera=%s cframePos=(%.3f, %.3f, %.3f)",
+		tostring(snapCamera),
+		spawnPos and spawnPos.X or 0,
+		spawnPos and spawnPos.Y or 0,
+		spawnPos and spawnPos.Z or 0
+	))
 	isGoalAnim          = false
 	goalCamTargetCFrame = nil
 
