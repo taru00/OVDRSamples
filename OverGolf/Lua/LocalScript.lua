@@ -124,6 +124,7 @@ local soundWall     = soundsFolder:WaitForChild("Wall")
 -- State
 -- ─────────────────────────────────────────
 local playerBall          = nil
+local playerBallBoundedConnection = nil
 local canSwing            = false
 local currentPower        = 50
 local aimDir              = Vector3.new(0, 0, -1)
@@ -448,7 +449,26 @@ BallReadyEvent.OnClientEvent:Connect(function(ballName, snapCamera)
 	-- 서버에서 Clone한 SimulationBall이 클라이언트에 복제될 때까지 게임 시작 처리를 지연합니다.
 	local ball = workspace:WaitForChild(ballName)
 
+	if playerBallBoundedConnection then
+		playerBallBoundedConnection:Disconnect()
+		playerBallBoundedConnection = nil
+	end
 	playerBall          = ball
+	playerBallBoundedConnection = playerBall.Bounded:Connect(function(otherInstance, bounce)
+		local otherName = otherInstance and otherInstance.Name or "nil"
+		local parentName = (otherInstance and otherInstance.Parent) and otherInstance.Parent.Name or "nil"
+		local hitPos = bounce and bounce.BouncedPosition
+		local normal = bounce and bounce.ImpactNormal
+		print(string.format(
+			"[Client][SimulationBall] Bounded other=%s parent=%s pos=(%.3f, %.3f, %.3f) normal=(%.3f, %.3f, %.3f) bounced=%s sliding=%s",
+			tostring(otherName),
+			tostring(parentName),
+			hitPos and hitPos.X or 0, hitPos and hitPos.Y or 0, hitPos and hitPos.Z or 0,
+			normal and normal.X or 0, normal and normal.Y or 0, normal and normal.Z or 0,
+			tostring(bounce and bounce.IsBouncedHit),
+			tostring(bounce and bounce.IsSlidingHit)
+		))
+	end)
 	canSwing            = true   -- ✅ 공 확인 후 세팅 (순서는 그대로)
 	isGoalAnim          = false
 	goalCamTargetCFrame = nil
@@ -474,6 +494,10 @@ ClearEvent.OnClientEvent:Connect(function(holeNumber)
 	printClientNetwork("Receive", "ClearEvent", "hole=" .. tostring(holeNumber))
 	canSwing     = false
 	playerBall   = nil
+	if playerBallBoundedConnection then
+		playerBallBoundedConnection:Disconnect()
+		playerBallBoundedConnection = nil
+	end
 	-- Hole cleared; result and scoreboard UI handle player feedback.
 end)
 
