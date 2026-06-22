@@ -131,7 +131,6 @@ local lastBallCFrame      = nil
 local localSwingCount     = 0
 local goalReportSent      = false
 local swingPollBall       = nil
-local swingPlaybackStarted = false
 
 local blockBar          = false  -- Result/Scoreboard 표시 중 bar 억제
 local pendingBarShow    = false  -- blockBar 해제 시 bar 올릴 예약
@@ -426,13 +425,6 @@ local function doSwing()
 			end
 
 			local ballPos = ballCFrame.Position
-
-			-- Played 이벤트 전에는 이전 시뮬레이션 위치/정지 상태가 남을 수 있으므로 판정을 보류합니다.
-			if not swingPlaybackStarted then
-				task.wait(POLL_INTERVAL)
-				elapsed = elapsed + POLL_INTERVAL
-				continue
-			end
 
 			-- 지정 홀 이탈 판정: 현재 스윙 중 다른 홀 위로 넘어가면 기준 위치로 되돌리고 다음 타를 허용합니다.
 			if lastBallCFrame then
