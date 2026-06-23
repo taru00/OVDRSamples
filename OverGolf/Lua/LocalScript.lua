@@ -167,6 +167,14 @@ local function formatTime(seconds)
 	end
 end
 
+local function restoreGameplayCamera(reason)
+	camera.CameraType = Enum.CameraType.Custom
+	camera.CameraSubject = cameraTarget
+	player.CameraMinZoomDistance = 1250
+	player.CameraMaxZoomDistance = 5000
+	print("[Client][Camera] RestoreGameplayCamera reason=" .. tostring(reason))
+end
+
 -- 위젯을 0,0,0,0 → 원본 사이즈로 팝업
 local function popupWidget(widget, origSize)
 	widget.Visible = true
@@ -393,8 +401,8 @@ local function doSwing()
 	params.StepsPerSecond = GolfConfig.SIMULATION_STEPS_PER_SECOND
 	params.InitialSpeed = initialSpeed
 
-	playerBall:Simulate(params)
-	playerBall:Play(true)
+	local autoplay = true
+	playerBall:Simulate(params, autoplay)
 
 	-- 이전 시뮬레이션이 리셋되고 새로운 시뮬레이션이 적용되도록 대기
 	wait(0.1)
@@ -438,6 +446,7 @@ local function doSwing()
 						swingBall:Stop()
 						swingBall.CFrame = lastBallCFrame						
 						canSwing = true
+						restoreGameplayCamera("otherHole")
 						setPowerBarVisible(true)
 						return
 					end
@@ -450,6 +459,7 @@ local function doSwing()
 				swingBall:Stop()
 				swingBall.CFrame = lastBallCFrame				
 				canSwing = true
+				restoreGameplayCamera("fall")
 				setPowerBarVisible(true)
 				return
 			end
@@ -526,6 +536,7 @@ local function doSwing()
 
 		-- 다음 타 준비: 골인이 아닌 경우에만 스윙 입력과 파워바를 다시 활성화합니다.
 		canSwing = true
+		restoreGameplayCamera(slept and "IsSleeping" or "timeout")
 		print("[Client][Game] NextStrokeReady reason=" .. (slept and "IsSleeping" or "timeout"))
 		setPowerBarVisible(true)
 	end)
@@ -708,6 +719,7 @@ BallReadyEvent.OnClientEvent:Connect(function(ballName, snapCamera, serverHole, 
 				lastBallCFrame = ballCFrame
 			end
 			canSwing = true
+			restoreGameplayCamera("PausedEvent")
 			print("[Client][Game] NextStrokeReady reason=PausedEvent")
 			setPowerBarVisible(true)
 		end
@@ -741,10 +753,7 @@ BallReadyEvent.OnClientEvent:Connect(function(ballName, snapCamera, serverHole, 
 		end
 	end
 
-	camera.CameraType            = Enum.CameraType.Custom
-	camera.CameraSubject         = cameraTarget
-	player.CameraMinZoomDistance = 1250
-	player.CameraMaxZoomDistance = 5000
+	restoreGameplayCamera("BallReady")
 end)
 
 ClearEvent.OnClientEvent:Connect(function(holeNumber)
